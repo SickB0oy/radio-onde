@@ -4,9 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.onde.radio.OndeApp
+import app.onde.radio.data.Genres
 import app.onde.radio.data.Recommender
 import app.onde.radio.data.Station
 import app.onde.radio.data.Suggestion
+import app.onde.radio.data.Tag
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,12 +21,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-enum class Mood(val label: String, val tag: String?) {
-    ForYou("Pour toi", null),
-    Calm("Calme", "chillout"),
-    Energy("Énergie", "dance"),
-    News("Infos", "news"),
-}
+data class GenreState(
+    val loading: Boolean = false,
+    val stations: List<Station> = emptyList(),
+    val error: String? = null,
+)
 
 data class HomeState(
     val loading: Boolean = true,
@@ -33,9 +34,15 @@ data class HomeState(
     val recoTitle: String = "Pour toi",
     val reco: List<Suggestion> = emptyList(),
     val trends: List<Station> = emptyList(),
-    val mood: Mood = Mood.ForYou,
-    val moodLoading: Boolean = false,
-    val moodStations: List<Station> = emptyList(),
+    /** Onglet affiché : [Genres.FOR_YOU], [Genres.OTHERS] ou la clé d'un genre. */
+    val selectedGenre: String = Genres.FOR_YOU,
+    /** Stations déjà chargées, par clé de genre. */
+    val genres: Map<String, GenreState> = emptyMap(),
+    /** Onglet « Autres genres » : tous les genres de l'annuaire, et celui qu'on a ouvert. */
+    val otherTags: List<Tag> = emptyList(),
+    val otherTagsLoading: Boolean = false,
+    val otherTagsError: String? = null,
+    val openedTag: String? = null,
 )
 
 data class SearchState(
@@ -102,26 +109,75 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     error = if (t.isFailure && r.isFailure) "Impossible de joindre l'annuaire des radios." else null,
                 )
             }
-            if (_home.value.mood != Mood.ForYou) selectMood(_home.value.mood)
         }
     }
 
-    fun selectMood(mood: Mood) {
-        _home.update { it.copy(mood = mood) }
-        val tag = mood.tag ?: return
-        val country = currentCountry()
-        viewModelScope.launch {
-            _home.update { it.copy(moodLoading = true) }
-            val result = runCatching {
-                onde.api.byTag(tag, 15, country).ifEmpty { onde.api.byTag(tag, 15) }
+    fun selectGenre(key: String) {
+        _home.update { it.copy(selectedGenre = key) }
+        when (key) {
+            Genres.FOR_YOU -> Unit
+            Genres.OTHERS -> {
+                val tag = _home.value.openedTag
+                if (tag != null) loadGenre("tag:$tag") else loadOtherTags()
             }
-            _home.update { it.copy(moodLoading = false, moodStations = result.getOrDefault(emptyList())) }
+            else -> loadGenre(key)
         }
     }
+
+    /** Onglet « Autres genres » : ouvre un genre de l'annuaire, ou revient à la liste (null). */
+    fun openTag(tag: String?) {
+        _home.update { it.copy(openedTag = tag) }
+        if (tag != null) loadGenre("tag:$tag") else loadOtherTags()
+    }
+
+    fun loadGenre(key: String, force: Boolean = false) {
+        val genre = Genres.find(key) ?: return
+        val cached = _home.value.genres[key]
+        if (!force && cached != null && (cached.loading || cached.stations.isNotEmpty())) return
+        val country = currentCountry()
+        _home.update { it.copy(genres = it.genres + (key to GenreState(loading = true))) }
+        viewModelScope.launch {
+            val result = runCatching { onde.api.byGenre(genre.tags, country) }
+            val state = result.fold(
+                onSuccess = { GenreState(stations = it) },
+                onFailure = { GenreState(error = "Impossible de charger ce genre. Vérifie ta connexion.") },
+            )
+            _home.update { it.copy(genres = it.genres + (key to state)) }
+        }
+    }
+
+    private fun loadOtherTags(force: Boolean = false) {
+        val h = _home.value
+        if (!force && (h.otherTagsLoading || h.otherTags.isNotEmpty())) return
+        _home.update { it.copy(otherTagsLoading = true, otherTagsError = null) }
+        viewModelScope.launch {
+            val result = runCatching {
+                onde.api.topTags().filter { t ->
+                    val name = t.name.trim().lowercase()
+                    name.length > 1 && t.stationCount >= 5 &&
+                        name !in Genres.genericTags &&
+                        Genres.coveredTags.none { covered -> name == covered }
+                }.distinctBy { it.name.trim().lowercase() }
+            }
+            _home.update {
+                it.copy(
+                    otherTagsLoading = false,
+                    otherTags = result.getOrDefault(emptyList()),
+                    otherTagsError = if (result.isFailure) "Impossible de charger la liste des genres." else null,
+                )
+            }
+        }
+    }
+
+    fun retryOtherTags() = loadOtherTags(force = true)
 
     fun setCountry(code: String) {
         library.setCountry(code)
+        // Les listes par genre dépendent du pays : on les recharge.
+        _home.update { it.copy(genres = emptyMap()) }
         refreshHome()
+        val selected = _home.value.selectedGenre
+        if (selected != Genres.FOR_YOU) selectGenre(selected)
     }
 
     fun play(station: Station) = engine.play(station)

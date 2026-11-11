@@ -1,7 +1,6 @@
 package app.onde.radio.ui
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,15 +12,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.onde.radio.data.Genres
 import app.onde.radio.data.Station
 import app.onde.radio.data.Suggestion
 import app.onde.radio.ui.theme.Onde
@@ -51,6 +53,15 @@ fun countryName(code: String): String =
 fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit) {
     val home by vm.home.collectAsStateWithLifecycle()
     var showCountries by remember { mutableStateOf(false) }
+    val tabs = remember {
+        listOf(Genres.FOR_YOU to "Pour toi") + Genres.ALL.map { it.key to it.label } + (Genres.OTHERS to "Autres genres")
+    }
+    val tabsState = rememberLazyListState()
+    // Garde l'onglet choisi visible.
+    LaunchedEffect(home.selectedGenre) {
+        val i = tabs.indexOfFirst { it.first == home.selectedGenre }
+        if (i >= 0) tabsState.animateScrollToItem(maxOf(0, i - 1))
+    }
     val greeting = remember {
         when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
             in 5..17 -> "Bonjour"
@@ -71,71 +82,23 @@ fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit) {
             }
         }
 
+        // Onglets : Pour toi, chaque style musical, puis tous les autres genres de l'annuaire.
         item {
-            Row(
-                Modifier.horizontalScroll(rememberScrollState()),
+            LazyRow(
+                state = tabsState,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(end = 8.dp),
             ) {
-                Mood.entries.forEach { m ->
-                    Pill(m.label, selected = m == home.mood) { vm.selectMood(m) }
+                items(tabs, key = { it.first }) { (key, label) ->
+                    Pill(label, selected = key == home.selectedGenre) { vm.selectGenre(key) }
                 }
             }
         }
 
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (home.mood == Mood.ForYou) {
-                    SectionTitle(home.recoTitle)
-                    when {
-                        home.loading && home.reco.isEmpty() -> Loading()
-                        home.error != null -> ErrorRetry(home.error!!) { vm.refreshHome() }
-                        home.reco.isEmpty() -> EmptyMessage("Rien à suggérer pour l'instant", "Écoute quelques stations : les suggestions s'adapteront à tes goûts.")
-                        else -> SuggestionRow(home.reco, onPlay)
-                    }
-                } else {
-                    SectionTitle("Ambiance ${home.mood.label.lowercase()}")
-                    when {
-                        home.moodLoading -> Loading()
-                        home.moodStations.isEmpty() -> EmptyMessage("Aucune station trouvée", "Essaie une autre ambiance ou un autre pays.")
-                        else -> SuggestionRow(home.moodStations.map { Suggestion(it, it.subtitle) }, onPlay)
-                    }
-                }
-            }
-        }
-
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                SectionTitle("Tendances : ${countryName(home.country)}", Modifier.weight(1f))
-                TextButton(onClick = { showCountries = true }) {
-                    Text("Changer de pays", color = Onde.Amber, fontSize = 13.sp)
-                }
-            }
-        }
-
-        if (home.loading && home.trends.isEmpty()) {
-            item { Loading() }
-        } else if (home.trends.isEmpty() && home.error == null) {
-            item { EmptyMessage("Pas de tendances", "Aucune donnée pour ce pays pour le moment.") }
-        }
-
-        itemsIndexed(home.trends, key = { _, s -> "trend-" + s.uuid }) { index, station ->
-            StationRow(
-                station = station,
-                onClick = { onPlay(station) },
-                leading = {
-                    Text(
-                        "${index + 1}",
-                        modifier = Modifier.width(22.dp),
-                        fontWeight = FontWeight.Bold,
-                        color = Onde.Muted,
-                    )
-                },
-                trailing = {
-                    if (station.clickTrend > 0) {
-                        Text("+${station.clickTrend}", fontSize = 12.sp, color = Onde.Amber, fontWeight = FontWeight.SemiBold)
-                    }
-                },
-            )
+        when (home.selectedGenre) {
+            Genres.FOR_YOU -> forYou(home, vm, onPlay) { showCountries = true }
+            Genres.OTHERS -> otherGenres(home, vm, onPlay)
+            else -> genreStations(home.selectedGenre, home, vm, onPlay)
         }
     }
 
@@ -167,6 +130,126 @@ fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit) {
             },
         )
     }
+}
+
+private fun LazyListScope.forYou(
+    home: HomeState,
+    vm: MainViewModel,
+    onPlay: (Station) -> Unit,
+    onChangeCountry: () -> Unit,
+) {
+    item {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionTitle(home.recoTitle)
+            when {
+                home.loading && home.reco.isEmpty() -> Loading()
+                home.error != null -> ErrorRetry(home.error) { vm.refreshHome() }
+                home.reco.isEmpty() -> EmptyMessage("Rien à suggérer pour l'instant", "Écoute quelques stations : les suggestions s'adapteront à tes goûts.")
+                else -> SuggestionRow(home.reco, onPlay)
+            }
+        }
+    }
+
+    item {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            SectionTitle("Tendances : ${countryName(home.country)}", Modifier.weight(1f))
+            TextButton(onClick = onChangeCountry) {
+                Text("Changer de pays", color = Onde.Amber, fontSize = 13.sp)
+            }
+        }
+    }
+
+    if (home.loading && home.trends.isEmpty()) {
+        item { Loading() }
+    } else if (home.trends.isEmpty() && home.error == null) {
+        item { EmptyMessage("Pas de tendances", "Aucune donnée pour ce pays pour le moment.") }
+    }
+
+    itemsIndexed(home.trends, key = { _, s -> "trend-" + s.uuid }) { index, station ->
+        StationRow(
+            station = station,
+            onClick = { onPlay(station) },
+            leading = { Rank(index) },
+            trailing = {
+                if (station.clickTrend > 0) {
+                    Text("+${station.clickTrend}", fontSize = 12.sp, color = Onde.Amber, fontWeight = FontWeight.SemiBold)
+                }
+            },
+        )
+    }
+}
+
+/** Les stations d'un genre : celles du pays choisi en premier, complétées par le reste du monde. */
+private fun LazyListScope.genreStations(
+    key: String,
+    home: HomeState,
+    vm: MainViewModel,
+    onPlay: (Station) -> Unit,
+) {
+    val genre = Genres.find(key) ?: return
+    val state = home.genres[key]
+    item(key = "genre-title-$key") {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            SectionTitle(genre.label)
+            Text("Les plus appréciées : ${countryName(home.country)} d'abord, puis le monde", fontSize = 12.sp, color = Onde.Muted)
+        }
+    }
+    when {
+        state == null || state.loading -> item { Loading() }
+        state.error != null -> item { ErrorRetry(state.error) { vm.loadGenre(key, force = true) } }
+        state.stations.isEmpty() -> item { EmptyMessage("Aucune station trouvée", "Essaie un autre genre.") }
+    }
+    itemsIndexed(state?.stations.orEmpty(), key = { _, s -> "genre-$key-" + s.uuid }) { index, station ->
+        StationRow(station = station, onClick = { onPlay(station) }, leading = { Rank(index) })
+    }
+}
+
+/** Onglet « Autres genres » : tous les genres de l'annuaire, puis les stations de celui qu'on ouvre. */
+private fun LazyListScope.otherGenres(home: HomeState, vm: MainViewModel, onPlay: (Station) -> Unit) {
+    val opened = home.openedTag
+    if (opened != null) {
+        item(key = "back-to-tags") {
+            TextButton(onClick = { vm.openTag(null) }, contentPadding = PaddingValues(0.dp)) {
+                Text("← Tous les genres", color = Onde.Amber, fontSize = 14.sp)
+            }
+        }
+        genreStations("tag:$opened", home, vm, onPlay)
+        return
+    }
+    item(key = "others-title") {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            SectionTitle("Tous les genres")
+            Text("Tous les styles de l'annuaire Radio-Browser, des plus fournis aux plus rares", fontSize = 12.sp, color = Onde.Muted)
+        }
+    }
+    when {
+        home.otherTagsLoading -> item { Loading() }
+        home.otherTagsError != null -> item { ErrorRetry(home.otherTagsError) { vm.retryOtherTags() } }
+    }
+    items(home.otherTags, key = { "tag-" + it.name }) { tag ->
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { vm.openTag(tag.name) }
+                .padding(vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                tag.name.replaceFirstChar(Char::uppercase),
+                modifier = Modifier.weight(1f),
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text("${tag.stationCount} stations", fontSize = 12.sp, color = Onde.Muted)
+        }
+    }
+}
+
+@Composable
+private fun Rank(index: Int) {
+    Text("${index + 1}", modifier = Modifier.width(26.dp), fontWeight = FontWeight.Bold, color = Onde.Muted)
 }
 
 @Composable

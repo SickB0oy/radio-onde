@@ -3,7 +3,11 @@ package app.onde.radio.data
 import app.onde.radio.player.StreamRecorder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -11,6 +15,13 @@ import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
+
+/** Un genre de l'annuaire Radio-Browser. */
+@Serializable
+data class Tag(
+    val name: String = "",
+    @SerialName("stationcount") val stationCount: Int = 0,
+)
 
 /**
  * Client minimal de l'API publique et gratuite Radio-Browser (https://www.radio-browser.info).
@@ -48,7 +59,8 @@ class RadioBrowserApi(private val client: OkHttpClient) {
         }
     }
 
-    private suspend fun stations(path: String, params: Map<String, String>): List<Station> {
+    /** Interroge le premier miroir qui répond. */
+    private suspend fun fetch(path: String, params: Map<String, String>): String {
         var last: Exception? = null
         for (host in hosts()) {
             try {
@@ -56,9 +68,7 @@ class RadioBrowserApi(private val client: OkHttpClient) {
                     params.forEach { (k, v) -> addQueryParameter(k, v) }
                     addQueryParameter("hidebroken", "true")
                 }.build()
-                return json.decodeFromString<List<Station>>(get(url))
-                    .filter { it.streamUrl.startsWith("http") }
-                    .distinctBy { it.name.lowercase().trim() }
+                return get(url)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -66,6 +76,34 @@ class RadioBrowserApi(private val client: OkHttpClient) {
             }
         }
         throw last ?: IOException("Aucun serveur Radio-Browser disponible")
+    }
+
+    private suspend fun stations(path: String, params: Map<String, String>): List<Station> =
+        json.decodeFromString<List<Station>>(fetch(path, params))
+            .filter { it.streamUrl.startsWith("http") }
+            .distinctBy { it.name.lowercase().trim() }
+
+    /** Tous les genres de l'annuaire, des plus fournis aux moins fournis. */
+    suspend fun topTags(limit: Int = 300): List<Tag> =
+        json.decodeFromString<List<Tag>>(
+            fetch("json/tags", mapOf("order" to "stationcount", "reverse" to "true", "limit" to "$limit"))
+        )
+
+    /**
+     * Stations d'un genre (plusieurs étiquettes possibles, ex. « hip » et « rap ») :
+     * d'abord celles du pays, complétées par le reste du monde si besoin.
+     */
+    suspend fun byGenre(tags: List<String>, countryCode: String, limit: Int = 40): List<Station> = coroutineScope {
+        val local = tags.map { tag -> async { runCatching { byTag(tag, limit, countryCode) }.getOrDefault(emptyList()) } }
+            .awaitAll().flatten()
+        val world = if (local.size >= 15) emptyList() else tags.map { tag ->
+            async { runCatching { byTag(tag, limit) }.getOrDefault(emptyList()) }
+        }.awaitAll().flatten()
+        if (local.isEmpty() && world.isEmpty()) throw IOException("Aucune station trouvée ou annuaire injoignable")
+        (local.sortedByDescending { it.votes } + world.sortedByDescending { it.votes })
+            .distinctBy { it.uuid }
+            .distinctBy { it.name.lowercase().trim() }
+            .take(limit)
     }
 
     /** Stations dont l'écoute progresse le plus dans un pays. */
