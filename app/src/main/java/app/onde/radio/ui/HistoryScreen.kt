@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
-import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,8 +37,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.onde.radio.data.HistoryEntry
 import app.onde.radio.data.LibraryData
-import app.onde.radio.player.PlaybackEngine
-import app.onde.radio.player.PlayerUiState
 import app.onde.radio.ui.theme.Onde
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -51,8 +48,6 @@ private val FILTERS = listOf("Aujourd'hui", "Cette semaine", "Enregistrés")
 @Composable
 fun HistoryScreen(
     library: LibraryData,
-    player: PlayerUiState,
-    engine: PlaybackEngine,
     onToggleSaved: (Long) -> Unit,
 ) {
     val context = LocalContext.current
@@ -71,11 +66,6 @@ fun HistoryScreen(
         }
     }
     val groups = remember(entries) { entries.groupBy { dayLabel(it.timeMs, dayFormat) } }
-
-    // Recalculé toutes les quelques secondes : ce qui sort du tampon n'est plus réécoutable.
-    val replayable = remember(entries, player.station?.uuid, player.bufferMs / 5_000) {
-        entries.filter { engine.canReplay(it.id) }.map { it.id }.toSet()
-    }
 
     LazyColumn(
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 16.dp),
@@ -121,8 +111,6 @@ fun HistoryScreen(
                 HistoryRow(
                     entry = entry,
                     time = timeFormat.format(Date(entry.timeMs)),
-                    canReplay = entry.id in replayable,
-                    onReplay = { engine.replay(entry.id) },
                     onToggleSaved = { onToggleSaved(entry.id) },
                     onFind = { context.findTrack(entry.artist, entry.title) },
                 )
@@ -139,10 +127,9 @@ fun HistoryScreen(
                     .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text("Le bouton orange réécoute le passage", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text("Un titre t'a plu ?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Avec l'option « Retour en arrière » (dans les réglages de l'accueil), pour la station en cours " +
-                        "et sur les 30 dernières minutes. Touche un titre pour le retrouver sur le web.",
+                    "Touche-le pour le retrouver sur le web, ou appuie sur + pour le garder dans « Enregistrés ».",
                     fontSize = 12.sp,
                     color = Onde.TextSoft,
                 )
@@ -155,8 +142,6 @@ fun HistoryScreen(
 private fun HistoryRow(
     entry: HistoryEntry,
     time: String,
-    canReplay: Boolean,
-    onReplay: () -> Unit,
     onToggleSaved: () -> Unit,
     onFind: () -> Unit,
 ) {
@@ -187,15 +172,6 @@ private fun HistoryRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            CircleIconButton(
-                icon = Icons.Rounded.Replay,
-                contentDescription = "Réécouter ce passage",
-                onClick = onReplay,
-                enabled = canReplay,
-                background = if (canReplay) Onde.Amber else Onde.Surface,
-                tint = if (canReplay) Onde.Ink else Onde.Muted,
-                iconSize = 18.dp,
-            )
             CircleIconButton(
                 icon = if (entry.saved) Icons.Rounded.Check else Icons.Rounded.Add,
                 contentDescription = if (entry.saved) "Retirer des titres enregistrés" else "Enregistrer le titre",

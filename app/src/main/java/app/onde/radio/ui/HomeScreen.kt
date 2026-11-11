@@ -17,12 +17,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -54,9 +50,7 @@ fun countryName(code: String): String =
 @Composable
 fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit) {
     val home by vm.home.collectAsStateWithLifecycle()
-    val library by vm.libraryData.collectAsStateWithLifecycle()
     var showCountries by remember { mutableStateOf(false) }
-    var showSettings by remember { mutableStateOf(false) }
     val greeting = remember {
         when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
             in 5..17 -> "Bonjour"
@@ -74,7 +68,6 @@ fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit) {
                     Text(greeting, fontSize = 13.sp, color = Onde.Muted)
                     Text("Radio Onde", fontSize = 30.sp, fontWeight = FontWeight.Bold)
                 }
-                CircleIconButton(Icons.Rounded.Settings, "Réglages", { showSettings = true })
             }
         }
 
@@ -144,49 +137,6 @@ fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit) {
                 },
             )
         }
-    }
-
-    if (showSettings) {
-        AlertDialog(
-            onDismissRequest = { showSettings = false },
-            containerColor = Onde.Surface2,
-            title = { Text("Réglages") },
-            text = {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable { vm.engine.setTimeShiftEnabled(!library.timeShiftEnabled) },
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Retour en arrière (30 min)", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "Garde les 30 dernières minutes de la station dans un fichier temporaire, " +
-                                "effacé quand tu changes de station. Permet de reculer, de réécouter un titre " +
-                                "et d'enregistrer une émission.\n\nDésactivé : rien n'est gardé pendant l'écoute. " +
-                                "Seule la pause du direct reste possible, en mémoire.",
-                            fontSize = 13.sp,
-                            color = Onde.TextSoft,
-                        )
-                    }
-                    Switch(
-                        checked = library.timeShiftEnabled,
-                        onCheckedChange = { vm.engine.setTimeShiftEnabled(it) },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Onde.Ink,
-                            checkedTrackColor = Onde.Amber,
-                            uncheckedThumbColor = Onde.Muted,
-                            uncheckedTrackColor = Onde.Surface,
-                            uncheckedBorderColor = Onde.Line,
-                        ),
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showSettings = false }) { Text("Fermer", color = Onde.Amber) }
-            },
-        )
     }
 
     if (showCountries) {

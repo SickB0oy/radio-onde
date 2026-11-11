@@ -33,8 +33,6 @@ data class LibraryData(
     /** Minutes d'écoute par genre : c'est ce qui nourrit les suggestions. */
     val tagScores: Map<String, Double> = emptyMap(),
     val countryCode: String? = null,
-    /** Option « Retour en arrière (30 min) » : désactivée par défaut. */
-    val timeShiftEnabled: Boolean = false,
     /** Dernière mise à jour des fiches des favoris et stations récentes. */
     val stationsRefreshedMs: Long = 0L,
 )
@@ -87,8 +85,6 @@ class LibraryStore(private val file: File, private val scope: CoroutineScope) {
     }
 
     fun setCountry(code: String) = edit { it.copy(countryCode = code) }
-
-    fun setTimeShiftEnabled(enabled: Boolean) = edit { it.copy(timeShiftEnabled = enabled) }
 
     /**
      * Met à jour, au plus une fois par jour, les adresses des favoris et des stations récentes

@@ -2,11 +2,8 @@
 
 Appli radio gratuite, sans pub ni pistage, qui va plus loin que les autres :
 
-- **Pause du direct** : en pause, la radio est mise de côté en mémoire pour reprendre là où tu t'étais arrêté.
-  Pendant l'écoute, rien n'est gardé.
-- **Option « Retour en arrière (30 min) »**, désactivée par défaut (Réglages, sur l'accueil) :
-  recul/avance de 30 s, réécoute d'un titre, **enregistrement** d'une émission dans `Musique/Radio Onde`.
-  Le fichier temporaire est effacé dès qu'on change de station.
+- **Pause du direct** : en pause, la suite est mise de côté en mémoire pour reprendre là où tu t'étais arrêté,
+  puis « +30 s » ou « Revenir au direct » pour rattraper. Pendant l'écoute, rien n'est gardé, et rien n'est écrit sur le téléphone.
 - **Historique des titres** de toutes les stations (seulement les noms des morceaux, jamais l'audio).
 - **Découverte intelligente** : suggestions calculées sur le téléphone selon ton temps d'écoute par genre, tendances par pays, ambiances.
 - Notification, écran verrouillé et Bluetooth via Media3.
@@ -28,26 +25,21 @@ En ligne de commande : `./gradlew assembleRelease` (il faut le SDK Android et `A
 > La version *release* est signée avec la clé de debug pour pouvoir l'installer tout de suite.
 > Crée ta propre clé avant de publier l'appli (F-Droid, IzzyOnDroid, Play Store).
 
-## Comment marche le retour en arrière
+## Comment marche la pause du direct
 
 ```
-Station (HTTP/ICY) ──► StreamRecorder ──► RingBuffer (fichier de 80 Mo)
-                         │ repère les titres            ▲
-                         ▼                              │ lit depuis n'importe quelle position
-                    Historique                TimeShiftDataSource ──► ExoPlayer ──► MediaSession
+Station (HTTP/ICY) ──► StreamRecorder ──► RingBuffer (en mémoire, 24 Mo max)
+                         │ repère les titres            │
+                         ▼                              ▼
+                    Historique            TimeShiftDataSource ──► ExoPlayer ──► MediaSession
 ```
 
-- `StreamRecorder` télécharge le flux en continu, retire les métadonnées ICY et note la
-  position exacte de chaque changement de titre.
-- `RingBuffer` : par défaut en mémoire vive, vidé au fil de l'écoute (il ne grossit que pendant
-  une pause, jusqu'à 24 Mo). Avec l'option activée : 30 min dans un fichier du cache, supprimé à l'arrêt.
-- `PlaybackEngine` relance ExoPlayer à la position voulue : reculer, avancer, revenir au
-  direct ou réécouter un titre revient à changer d'octet de départ.
+- `StreamRecorder` reçoit le flux, retire les métadonnées ICY et note chaque changement de titre.
+- `RingBuffer` est en mémoire vive : ce qui a été écouté est oublié aussitôt ; il ne grossit
+  que pendant une pause, et il est libéré quand on change de station.
 
 Limites connues :
-- Flux **HLS** (`.m3u8`) et flux qui refusent la connexion directe : lecture normale, sans
-  retour en arrière ni enregistrement.
-- Flux **Ogg/Opus** : pause possible, mais pas de saut en arrière.
+- Flux **HLS** (`.m3u8`) et flux qui refusent la connexion directe : lecture normale, sans pause du direct.
 - Les titres dépendent de la station : certaines n'envoient aucune métadonnée.
 
 ## Structure

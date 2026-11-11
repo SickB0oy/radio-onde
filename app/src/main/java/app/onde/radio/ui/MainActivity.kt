@@ -155,8 +155,6 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
                 )
                 tab == Tab.History -> HistoryScreen(
                     library = library,
-                    player = player,
-                    engine = vm.engine,
                     onToggleSaved = vm.library::toggleSaved,
                 )
                 else -> FavoritesScreen(library = library, onPlay = vm::play)

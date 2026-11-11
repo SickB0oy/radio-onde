@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,17 +21,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
-import androidx.compose.material.icons.rounded.FiberManualRecord
 import androidx.compose.material.icons.rounded.Forward30
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Replay30
-import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -176,15 +172,12 @@ fun PlayerScreen(
             }
         }
 
-        // Barre de retour en arrière
-        Timeline(state, engine)
+        // Où en est-on par rapport au direct
+        LiveStatus(state)
 
         // Commandes
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            CircleIconButton(
-                Icons.Rounded.Replay30, "Reculer de 30 secondes", { engine.seekBy(-30_000) },
-                size = 56.dp, iconSize = 26.dp, enabled = state.canRewind,
-            )
+            Spacer(Modifier.size(56.dp))
             Box(
                 Modifier
                     .size(84.dp)
@@ -205,28 +198,18 @@ fun PlayerScreen(
                 }
             }
             CircleIconButton(
-                Icons.Rounded.Forward30, "Avancer de 30 secondes", { engine.seekBy(30_000) },
+                Icons.Rounded.Forward30, "Avancer de 30 secondes", { engine.skipForward() },
                 size = 56.dp, iconSize = 26.dp, enabled = state.canSeekForward,
             )
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            WideButton(
-                label = "Revenir au direct",
-                modifier = Modifier.weight(1f),
-                enabled = !state.isLive,
-                onClick = engine::goLive,
-                dotColor = Onde.Red,
-            )
-            WideButton(
-                label = if (state.isRecording) "Arrêter · ${formatDuration(state.recordingMs)}" else "Enregistrer",
-                modifier = Modifier.weight(1f),
-                enabled = true,
-                onClick = engine::toggleRecording,
-                icon = if (state.isRecording) Icons.Rounded.Stop else Icons.Rounded.FiberManualRecord,
-                highlighted = state.isRecording,
-            )
-        }
+        WideButton(
+            label = "Revenir au direct",
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !state.isLive,
+            onClick = engine::goLive,
+            dotColor = Onde.Red,
+        )
 
         state.previous?.let { prev ->
             Row(
@@ -254,48 +237,33 @@ fun PlayerScreen(
     }
 }
 
+/** « En direct », ou le retard accumulé après une pause. */
 @Composable
-private fun Timeline(state: PlayerUiState, engine: PlaybackEngine) {
-    var dragging by remember { mutableStateOf<Float?>(null) }
-    val buffer = state.bufferMs.coerceAtLeast(1)
-    val livePosition = (1f - state.delayMs.toFloat() / buffer).coerceIn(0f, 1f)
-    val shown = dragging ?: livePosition
-    val shownDelay = ((1f - shown) * buffer).toLong()
-
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Slider(
-            value = if (state.canRewind || state.canSeekForward) shown else 1f,
-            onValueChange = { dragging = it },
-            onValueChangeFinished = {
-                dragging?.let { engine.seekToDelay(((1f - it) * buffer).toLong()) }
-                dragging = null
-            },
-            enabled = state.canRewind,
-            colors = SliderDefaults.colors(
-                thumbColor = Onde.Amber,
-                activeTrackColor = Onde.Amber,
-                inactiveTrackColor = Onde.Line,
-                disabledThumbColor = Onde.Muted,
-                disabledActiveTrackColor = Onde.Line,
-                disabledInactiveTrackColor = Onde.Line,
-            ),
+private fun LiveStatus(state: PlayerUiState) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Onde.Surface)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(if (state.isLive) Onde.Red else Onde.Muted)
         )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(
-                if (state.canRewind) "Tampon : ${formatDuration(state.bufferMs)}" else "Pause du direct",
-                fontSize = 12.sp,
-                color = Onde.Muted,
-            )
-            Text(
-                when {
-                    dragging == null && state.isLive -> "En direct"
-                    else -> "−${formatDuration(shownDelay)} du direct"
-                },
-                fontSize = 12.sp,
-                color = Onde.Amber,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text("Direct", fontSize = 12.sp, color = Onde.Muted)
+        Text(
+            if (state.isLive) "En direct" else "−${formatDuration(state.delayMs)} du direct",
+            modifier = Modifier.weight(1f),
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (state.isLive) Onde.Text else Onde.Amber,
+        )
+        if (!state.isPlaying && !state.isBuffering) {
+            Text("En pause : la suite est mise de côté", fontSize = 12.sp, color = Onde.Muted)
         }
     }
 }

@@ -1,32 +1,18 @@
 package app.onde.radio.player
 
 import java.io.Closeable
-import java.io.File
 import java.io.InterruptedIOException
-import java.io.OutputStream
-import java.io.RandomAccessFile
 
 /**
- * Tampon circulaire qui garde au plus [capacity] octets d'un flux, en mémoire vive ([inMemory])
- * ou dans un fichier temporaire ([onDisk], seulement si l'option « Retour en arrière » est activée).
+ * Tampon circulaire en mémoire vive qui garde au plus [capacity] octets d'un flux.
+ * Rien n'est écrit sur le stockage du téléphone.
  *
  * Les positions sont « absolues » : la position 0 est le premier octet reçu depuis
  * le lancement de la station. Seuls les octets entre [oldest] et [written] sont lisibles.
  */
-class RingBuffer private constructor(
-    private val raf: RandomAccessFile?,
-    private val memory: ByteArray?,
-    private val file: File?,
-    val capacity: Long,
-) : Closeable {
+class RingBuffer(private val capacity: Int) : Closeable {
 
-    companion object {
-        fun inMemory(capacity: Int) = RingBuffer(null, ByteArray(capacity), null, capacity.toLong())
-
-        fun onDisk(file: File, capacity: Long) =
-            RingBuffer(RandomAccessFile(file, "rw").apply { setLength(capacity) }, null, file, capacity)
-    }
-
+    private var memory: ByteArray? = ByteArray(capacity)
     private val lock = Object()
     @Volatile private var floor = 0L
 
@@ -53,13 +39,14 @@ class RingBuffer private constructor(
 
     fun write(buf: ByteArray, off: Int, len: Int) {
         synchronized(lock) {
+            val mem = memory ?: return
             if (finished) return
             var o = off
             var remaining = len
             while (remaining > 0) {
-                val p = written % capacity
-                val n = minOf(remaining.toLong(), capacity - p).toInt()
-                store(p, buf, o, n)
+                val p = (written % capacity).toInt()
+                val n = minOf(remaining, capacity - p)
+                System.arraycopy(buf, o, mem, p, n)
                 written += n
                 o += n
                 remaining -= n
@@ -89,58 +76,22 @@ class RingBuffer private constructor(
                     throw InterruptedIOException()
                 }
             }
+            val mem = memory ?: return -1
             if (pos >= written) return if (finished) -1 else 0
             val start = maxOf(pos, oldest)
-            val p = start % capacity
-            val n = minOf(len.toLong(), written - start, capacity - p).toInt()
-            load(p, buf, off, n)
+            val p = (start % capacity).toInt()
+            val n = minOf(len.toLong(), written - start, (capacity - p).toLong()).toInt()
+            System.arraycopy(mem, p, buf, off, n)
             return n
         }
     }
 
-    /** Copie les octets [from, to) dans [out] (utilisé pour l'enregistrement). */
-    fun copyTo(out: OutputStream, from: Long, to: Long) {
-        val chunk = ByteArray(64 * 1024)
-        var pos = from
-        while (pos < to) {
-            val n = synchronized(lock) {
-                val start = maxOf(pos, oldest)
-                if (start >= to) return
-                pos = start
-                val p = start % capacity
-                val len = minOf(chunk.size.toLong(), to - start, capacity - p).toInt()
-                load(p, chunk, 0, len)
-                len
-            }
-            out.write(chunk, 0, n)
-            pos += n
-        }
-    }
-
-    private fun store(p: Long, buf: ByteArray, off: Int, n: Int) {
-        if (raf != null) {
-            raf.seek(p)
-            raf.write(buf, off, n)
-        } else {
-            System.arraycopy(buf, off, memory!!, p.toInt(), n)
-        }
-    }
-
-    private fun load(p: Long, buf: ByteArray, off: Int, n: Int) {
-        if (raf != null) {
-            raf.seek(p)
-            raf.readFully(buf, off, n)
-        } else {
-            System.arraycopy(memory!!, p.toInt(), buf, off, n)
-        }
-    }
-
-    /** Ferme le tampon et efface le fichier temporaire s'il y en a un. */
+    /** Arrête le tampon et libère la mémoire. */
     override fun close() {
-        finish()
         synchronized(lock) {
-            raf?.close()
-            file?.delete()
+            finished = true
+            memory = null
+            lock.notifyAll()
         }
     }
 }
