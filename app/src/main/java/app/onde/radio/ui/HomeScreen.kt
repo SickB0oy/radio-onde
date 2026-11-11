@@ -18,7 +18,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.AlertDialog
@@ -61,7 +60,6 @@ fun HomeScreen(
     onPlay: (Station) -> Unit,
     onSettings: () -> Unit,
     onZapping: () -> Unit,
-    onGlobe: () -> Unit,
 ) {
     val home by vm.home.collectAsStateWithLifecycle()
     var showCountries by remember { mutableStateOf(false) }
@@ -93,7 +91,6 @@ fun HomeScreen(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CircleIconButton(Icons.Rounded.Shuffle, "Zapping", onZapping, tint = Onde.Accent)
-                    CircleIconButton(Icons.Rounded.Public, "Globe des radios", onGlobe, tint = Onde.Accent)
                     CircleIconButton(Icons.Rounded.Settings, "Réglages et à propos", onSettings)
                 }
             }

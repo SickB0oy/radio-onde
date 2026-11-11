@@ -169,7 +169,7 @@ private fun plausible(p: GeoPoint, boxes: Map<String, FloatArray>): Boolean {
  * Pas de carte à télécharger : ce sont les milliers de stations qui dessinent les continents.
  */
 @Composable
-fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
+fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?) {
     val globe by vm.globe.collectAsStateWithLifecycle()
     val player by vm.player.collectAsStateWithLifecycle()
     val library by vm.libraryData.collectAsStateWithLifecycle()
@@ -389,7 +389,8 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
                     color = Onde.Muted,
                 )
             }
-            CircleIconButton(Icons.Rounded.Close, "Fermer le globe", onClose)
+            // Bouton fermer seulement quand le globe est ouvert par-dessus un autre écran.
+            if (onClose != null) CircleIconButton(Icons.Rounded.Close, "Fermer le globe", onClose)
         }
 
         when {

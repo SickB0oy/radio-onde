@@ -75,7 +75,7 @@ class MainActivity : ComponentActivity() {
 
 enum class Tab(val label: String) {
     Home("Accueil"),
-    Player("Lecteur"),
+    Globe("Globe"),
     History("Historique"),
     Favorites("Favoris"),
 }
@@ -89,11 +89,12 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var aboutOpen by rememberSaveable { mutableStateOf(false) }
     var zappingOpen by rememberSaveable { mutableStateOf(false) }
-    var globeOpen by rememberSaveable { mutableStateOf(false) }
+    // Le lecteur s'ouvre par-dessus l'onglet en cours (en touchant le mini-lecteur).
+    var playerOpen by rememberSaveable { mutableStateOf(false) }
     val closeOverlays = {
         aboutOpen = false
         zappingOpen = false
-        globeOpen = false
+        playerOpen = false
         searchOpen = false
     }
     val snackbar = remember { SnackbarHostState() }
@@ -115,7 +116,7 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
         }
     }
 
-    val overlayOpen = aboutOpen || zappingOpen || globeOpen || searchOpen
+    val overlayOpen = aboutOpen || zappingOpen || playerOpen || searchOpen
     BackHandler(enabled = overlayOpen || tab != Tab.Home) {
         if (overlayOpen) closeOverlays() else tab = Tab.Home
     }
@@ -125,10 +126,13 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             Column(Modifier.background(Onde.Ink).navigationBarsPadding()) {
-                if (player.station != null && tab != Tab.Player && !searchOpen && !zappingOpen && !globeOpen) {
+                if (player.station != null && !playerOpen && !searchOpen && !zappingOpen) {
                     MiniPlayer(
                         state = player,
-                        onOpen = { tab = Tab.Player },
+                        onOpen = {
+                            closeOverlays()
+                            playerOpen = true
+                        },
                         onToggle = vm.engine::togglePlay,
                     )
                 }
@@ -150,13 +154,23 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
             when {
                 aboutOpen -> AboutScreen(vm = vm, onClose = { aboutOpen = false })
                 zappingOpen -> ZappingScreen(vm = vm, onClose = { zappingOpen = false })
-                globeOpen -> GlobeScreen(vm = vm, onClose = { globeOpen = false })
+                playerOpen -> PlayerScreen(
+                    state = player,
+                    isFavorite = player.station?.let { s -> library.favorites.any { it.uuid == s.uuid } } == true,
+                    engine = vm.engine,
+                    onToggleFavorite = { player.station?.let(vm.library::toggleFavorite) },
+                    onBack = { playerOpen = false },
+                    onOpenHistory = {
+                        playerOpen = false
+                        tab = Tab.History
+                    },
+                )
                 searchOpen -> SearchScreen(
                     vm = vm,
                     onPlay = {
                         vm.play(it)
                         searchOpen = false
-                        tab = Tab.Player
+                        playerOpen = true
                     },
                     onClose = { searchOpen = false },
                 )
@@ -165,16 +179,8 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
                     onPlay = vm::play,
                     onSettings = { aboutOpen = true },
                     onZapping = { zappingOpen = true },
-                    onGlobe = { globeOpen = true },
                 )
-                tab == Tab.Player -> PlayerScreen(
-                    state = player,
-                    isFavorite = player.station?.let { s -> library.favorites.any { it.uuid == s.uuid } } == true,
-                    engine = vm.engine,
-                    onToggleFavorite = { player.station?.let(vm.library::toggleFavorite) },
-                    onBack = { tab = Tab.Home },
-                    onOpenHistory = { tab = Tab.History },
-                )
+                tab == Tab.Globe -> GlobeScreen(vm = vm, onClose = null)
                 tab == Tab.History -> HistoryScreen(
                     library = library,
                     onToggleSaved = vm.library::toggleSaved,
@@ -241,7 +247,7 @@ private fun BottomNav(
             .padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val (left, right) = Tab.entries.partition { it == Tab.Home || it == Tab.Player }
+        val (left, right) = Tab.entries.partition { it == Tab.Home || it == Tab.Globe }
         left.forEach { NavItem(it, active = it == selected && !searchOpen, onSelect = onSelect) }
 
         // Gros bouton de recherche, au centre et à portée de pouce.
