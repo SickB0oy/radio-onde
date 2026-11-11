@@ -28,6 +28,7 @@ class TimeShiftDataSource(
         transferInitializing(dataSpec)
         val from = dataSpec.uri.getQueryParameter("from")?.toLongOrNull() ?: 0L
         position = maxOf(from + dataSpec.position, minReadablePos())
+        recorder.readPos = position
         opened = true
         transferStarted(dataSpec)
         return C.LENGTH_UNSET.toLong()

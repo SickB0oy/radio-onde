@@ -87,6 +87,13 @@ class PlaybackEngine(
     @Volatile private var recorder: StreamRecorder? = null
     @Volatile private var session = 0
     private var startAbs = 0L
+    /**
+     * Retard « normal » de la station : au branchement, le serveur envoie d'un coup quelques
+     * secondes déjà diffusées. Ce retard est le même dans toutes les applis radio ; on l'appelle
+     * « direct » et on n'affiche que le retard en plus (pause, etc.).
+     */
+    private var liveFloorMs = Long.MAX_VALUE
+    private var playingSinceStartMs = 0L
     private var direct = false
     private val directMarks = mutableListOf<TrackMark>()
     private val directCandidates = ArrayDeque<Pair<String, Boolean>>()
@@ -179,6 +186,8 @@ class PlaybackEngine(
             directMarks.clear()
             lastNotifiedMark = null
             startAbs = 0L
+            liveFloorMs = Long.MAX_VALUE
+            playingSinceStartMs = 0L
             _state.value = PlayerUiState(station = station, isBuffering = true)
             library.onStationPlayed(station)
             scope.launch { api.countClick(station.uuid) }
@@ -257,7 +266,8 @@ class PlaybackEngine(
         val headroom = (LIVE_HEADROOM_MS / 1000.0 * bps).toLong()
         val min = rec.buffer.oldest
         val max = maxOf(min, rec.buffer.written - headroom)
-        val target = (rec.buffer.written - delayMs / 1000.0 * bps).toLong().coerceIn(min, max)
+        val floor = if (liveFloorMs == Long.MAX_VALUE) 0L else liveFloorMs
+        val target = (rec.buffer.written - (delayMs + floor) / 1000.0 * bps).toLong().coerceIn(min, max)
         prepareAt(target)
     }
 
@@ -302,8 +312,22 @@ class PlaybackEngine(
         return true
     }
 
+    /** Ce qu'ExoPlayer a déjà chargé mais pas encore joué, en millisecondes. */
+    private fun bufferedAheadMs(): Long =
+        (player.bufferedPosition - player.currentPosition).coerceAtLeast(0)
+
+    /**
+     * Position d'écoute dans le flux (en octets) : ce qui a été lu, moins ce qui attend dans le
+     * lecteur. Plus fiable que de multiplier la durée écoutée par un débit estimé.
+     */
     private fun playAbs(rec: StreamRecorder): Long =
-        startAbs + (player.currentPosition.coerceAtLeast(0) * rec.bytesPerSecond / 1000.0).toLong()
+        maxOf(startAbs, rec.readPos - (bufferedAheadMs() * rec.bytesPerSecond / 1000.0).toLong())
+
+    /** Retard total sur ce que le serveur envoie, en millisecondes. */
+    private fun rawDelayMs(rec: StreamRecorder): Long {
+        val unreadMs = ((rec.buffer.written - rec.readPos) * 1000 / rec.bytesPerSecond).toLong().coerceAtLeast(0)
+        return unreadMs + bufferedAheadMs()
+    }
 
     private fun releaseRecorder() {
         recorder?.release()
@@ -358,6 +382,7 @@ class PlaybackEngine(
     private fun tick() {
         if (player.isPlaying) {
             listenedMs += TICK_MS
+            playingSinceStartMs += TICK_MS
             if (listenedMs >= 60_000) {
                 listenedMs = 0
                 _state.value.station?.let { library.addListeningMinutes(it, 1.0) }
@@ -383,7 +408,10 @@ class PlaybackEngine(
         if (rec != null && !direct) {
             val bps = rec.bytesPerSecond
             val pa = playAbs(rec)
-            delayMs = ((rec.buffer.written - pa) * 1000 / bps).toLong().coerceAtLeast(0)
+            val raw = rawDelayMs(rec)
+            // Le plus petit retard constaté en écoute normale = le « direct » de cette station.
+            if (player.isPlaying && playingSinceStartMs >= 3_000) liveFloorMs = minOf(liveFloorMs, raw)
+            delayMs = if (liveFloorMs == Long.MAX_VALUE) 0 else (raw - liveFloorMs).coerceAtLeast(0)
             bufferMs = ((rec.buffer.written - rec.buffer.oldest) * 1000 / bps).toLong().coerceAtLeast(0)
             val marks = rec.marks
             val idx = marks.indexOfLast { it.absPos <= pa }
