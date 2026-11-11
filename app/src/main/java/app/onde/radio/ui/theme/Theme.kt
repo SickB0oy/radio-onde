@@ -6,16 +6,17 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-/** Couleurs de la maquette. */
+/** Couleurs de l'appli : vert sur fond noir. */
 object Onde {
-    val Ink = Color(0xFF0E1116)
-    val Surface = Color(0xFF161A21)
-    val Surface2 = Color(0xFF1B2029)
-    val Line = Color(0xFF262C36)
+    val Ink = Color(0xFF000000)
+    val Surface = Color(0xFF121212)
+    val Surface2 = Color(0xFF1A1A1A)
+    val Line = Color(0xFF2A2A2A)
     val Text = Color(0xFFF3F4F6)
     val TextSoft = Color(0xFFC7CDD6)
-    val Muted = Color(0xFF9AA3AF)
-    val Amber = Color(0xFFFFB547)
+    val Muted = Color(0xFF9CA3A0)
+    /** Vert Onde : la couleur d'accent de l'appli et du logo. */
+    val Accent = Color(0xFF2BD97C)
     val Red = Color(0xFFF87171)
 
     /** Couleurs des pochettes générées quand une station n'a pas de logo. */
@@ -31,7 +32,7 @@ object Onde {
 fun OndeTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = darkColorScheme(
-            primary = Onde.Amber,
+            primary = Onde.Accent,
             onPrimary = Onde.Ink,
             background = Onde.Ink,
             onBackground = Onde.Text,

@@ -40,6 +40,13 @@ class RadioBrowserApi(private val client: OkHttpClient) {
 
     @Volatile private var hosts: List<String>? = null
 
+    companion object {
+        /** Code « pays » qui veut dire : toutes les stations du monde. */
+        const val WORLD = "ALL"
+
+        fun countryFilter(code: String?): String? = code?.takeIf { it.isNotBlank() && it != WORLD }
+    }
+
     private suspend fun hosts(): List<String> {
         hosts?.let { return it }
         val fallback = listOf("de1.api.radio-browser.info", "de2.api.radio-browser.info", "fi1.api.radio-browser.info")
@@ -94,9 +101,10 @@ class RadioBrowserApi(private val client: OkHttpClient) {
      * d'abord celles du pays, complétées par le reste du monde si besoin.
      */
     suspend fun byGenre(tags: List<String>, countryCode: String, limit: Int = 40): List<Station> = coroutineScope {
-        val local = tags.map { tag -> async { runCatching { byTag(tag, limit, countryCode) }.getOrDefault(emptyList()) } }
+        val country = countryFilter(countryCode)
+        val local = if (country == null) emptyList() else tags.map { tag -> async { runCatching { byTag(tag, limit, countryCode) }.getOrDefault(emptyList()) } }
             .awaitAll().flatten()
-        val world = if (local.size >= 15) emptyList() else tags.map { tag ->
+        val world = if (country != null && local.size >= 15) emptyList() else tags.map { tag ->
             async { runCatching { byTag(tag, limit) }.getOrDefault(emptyList()) }
         }.awaitAll().flatten()
         if (local.isEmpty() && world.isEmpty()) throw IOException("Aucune station trouvée ou annuaire injoignable")
@@ -109,13 +117,19 @@ class RadioBrowserApi(private val client: OkHttpClient) {
     /** Stations dont l'écoute progresse le plus dans un pays. */
     suspend fun trending(countryCode: String, limit: Int = 10) = stations(
         "json/stations/search",
-        mapOf("countrycode" to countryCode, "order" to "clicktrend", "reverse" to "true", "limit" to "$limit"),
+        buildMap {
+            countryFilter(countryCode)?.let { put("countrycode", it) }
+            put("order", "clicktrend"); put("reverse", "true"); put("limit", "$limit")
+        },
     )
 
     /** Les plus appréciées d'un pays (utile quand on n'a pas encore d'historique). */
     suspend fun topVoted(countryCode: String, limit: Int = 12) = stations(
         "json/stations/search",
-        mapOf("countrycode" to countryCode, "order" to "votes", "reverse" to "true", "limit" to "$limit"),
+        buildMap {
+            countryFilter(countryCode)?.let { put("countrycode", it) }
+            put("order", "votes"); put("reverse", "true"); put("limit", "$limit")
+        },
     )
 
     suspend fun byTag(tag: String, limit: Int = 15, countryCode: String? = null) = stations(
@@ -125,7 +139,7 @@ class RadioBrowserApi(private val client: OkHttpClient) {
             put("order", "votes")
             put("reverse", "true")
             put("limit", "$limit")
-            if (countryCode != null) put("countrycode", countryCode)
+            countryFilter(countryCode)?.let { put("countrycode", it) }
         },
     )
 

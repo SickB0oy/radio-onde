@@ -199,7 +199,7 @@ private fun MiniPlayer(state: PlayerUiState, onOpen: () -> Unit, onToggle: () ->
             icon = if (state.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
             contentDescription = if (state.isPlaying) "Pause" else "Lecture",
             onClick = onToggle,
-            background = Onde.Amber,
+            background = Onde.Accent,
             tint = Onde.Ink,
         )
     }
@@ -228,7 +228,7 @@ private fun BottomNav(
                 Modifier
                     .size(60.dp)
                     .clip(CircleShape)
-                    .background(if (searchOpen) Onde.Text else Onde.Amber)
+                    .background(if (searchOpen) Onde.Text else Onde.Accent)
                     .clickable(role = Role.Button, onClickLabel = "Rechercher une station", onClick = onSearch),
                 contentAlignment = Alignment.Center,
             ) {
@@ -261,13 +261,13 @@ private fun RowScope.NavItem(tab: Tab, active: Boolean, onSelect: (Tab) -> Unit)
                 .width(24.dp)
                 .height(4.dp)
                 .clip(RoundedCornerShape(2.dp))
-                .background(if (active) Onde.Amber else Color.Transparent)
+                .background(if (active) Onde.Accent else Color.Transparent)
         )
         Text(
             tab.label,
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
-            color = if (active) Onde.Amber else Onde.Muted,
+            color = if (active) Onde.Accent else Onde.Muted,
             maxLines = 1,
         )
     }

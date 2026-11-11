@@ -54,9 +54,9 @@ fun SearchScreen(vm: MainViewModel, onPlay: (Station) -> Unit, onClose: () -> Un
                     singleLine = true,
                     shape = RoundedCornerShape(22.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Onde.Amber,
+                        focusedBorderColor = Onde.Accent,
                         unfocusedBorderColor = Onde.Line,
-                        cursorColor = Onde.Amber,
+                        cursorColor = Onde.Accent,
                         focusedContainerColor = Onde.Surface,
                         unfocusedContainerColor = Onde.Surface,
                     ),

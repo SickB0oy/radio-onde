@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.onde.radio.data.Genres
+import app.onde.radio.data.RadioBrowserApi
 import app.onde.radio.data.Station
 import app.onde.radio.data.Suggestion
 import app.onde.radio.ui.theme.Onde
@@ -42,12 +43,13 @@ import java.util.Calendar
 import java.util.Locale
 
 private val COUNTRIES = listOf(
-    "FR", "BE", "CH", "CA", "LU", "MC", "MA", "DZ", "TN", "SN", "CI",
+    RadioBrowserApi.WORLD, "FR", "BE", "CH", "CA", "LU", "MC", "MA", "DZ", "TN", "SN", "CI",
     "GB", "US", "DE", "ES", "IT", "PT", "NL", "BR", "JP",
 )
 
 fun countryName(code: String): String =
-    Locale("", code).getDisplayCountry(Locale.FRENCH).ifBlank { code }
+    if (code == RadioBrowserApi.WORLD) "Monde entier"
+    else Locale("", code).getDisplayCountry(Locale.FRENCH).ifBlank { code }
 
 @Composable
 fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit) {
@@ -97,8 +99,8 @@ fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit) {
 
         when (home.selectedGenre) {
             Genres.FOR_YOU -> forYou(home, vm, onPlay) { showCountries = true }
-            Genres.OTHERS -> otherGenres(home, vm, onPlay)
-            else -> genreStations(home.selectedGenre, home, vm, onPlay)
+            Genres.OTHERS -> otherGenres(home, vm, onPlay) { showCountries = true }
+            else -> genreStations(home.selectedGenre, home, vm, onPlay) { showCountries = true }
         }
     }
 
@@ -119,14 +121,14 @@ fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit) {
                                     vm.setCountry(code)
                                 }
                                 .padding(vertical = 14.dp),
-                            color = if (code == home.country) Onde.Amber else Onde.Text,
+                            color = if (code == home.country) Onde.Accent else Onde.Text,
                             fontSize = 15.sp,
                         )
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showCountries = false }) { Text("Fermer", color = Onde.Amber) }
+                TextButton(onClick = { showCountries = false }) { Text("Fermer", color = Onde.Accent) }
             },
         )
     }
@@ -154,7 +156,7 @@ private fun LazyListScope.forYou(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             SectionTitle("Tendances : ${countryName(home.country)}", Modifier.weight(1f))
             TextButton(onClick = onChangeCountry) {
-                Text("Changer de pays", color = Onde.Amber, fontSize = 13.sp)
+                Text("Changer de pays", color = Onde.Accent, fontSize = 13.sp)
             }
         }
     }
@@ -172,7 +174,7 @@ private fun LazyListScope.forYou(
             leading = { Rank(index) },
             trailing = {
                 if (station.clickTrend > 0) {
-                    Text("+${station.clickTrend}", fontSize = 12.sp, color = Onde.Amber, fontWeight = FontWeight.SemiBold)
+                    Text("+${station.clickTrend}", fontSize = 12.sp, color = Onde.Accent, fontWeight = FontWeight.SemiBold)
                 }
             },
         )
@@ -185,13 +187,24 @@ private fun LazyListScope.genreStations(
     home: HomeState,
     vm: MainViewModel,
     onPlay: (Station) -> Unit,
+    onChangeCountry: () -> Unit,
 ) {
     val genre = Genres.find(key) ?: return
     val state = home.genres[key]
     item(key = "genre-title-$key") {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            SectionTitle(genre.label)
-            Text("Les plus appréciées : ${countryName(home.country)} d'abord, puis le monde", fontSize = 12.sp, color = Onde.Muted)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                SectionTitle(genre.label, Modifier.weight(1f))
+                TextButton(onClick = onChangeCountry) {
+                    Text("Changer de pays", color = Onde.Accent, fontSize = 13.sp)
+                }
+            }
+            Text(
+                if (home.country == RadioBrowserApi.WORLD) "Les plus appréciées dans le monde entier"
+                else "Les plus appréciées : ${countryName(home.country)} d'abord, puis le monde",
+                fontSize = 12.sp,
+                color = Onde.Muted,
+            )
         }
     }
     when {
@@ -205,15 +218,20 @@ private fun LazyListScope.genreStations(
 }
 
 /** Onglet « Autres genres » : tous les genres de l'annuaire, puis les stations de celui qu'on ouvre. */
-private fun LazyListScope.otherGenres(home: HomeState, vm: MainViewModel, onPlay: (Station) -> Unit) {
+private fun LazyListScope.otherGenres(
+    home: HomeState,
+    vm: MainViewModel,
+    onPlay: (Station) -> Unit,
+    onChangeCountry: () -> Unit,
+) {
     val opened = home.openedTag
     if (opened != null) {
         item(key = "back-to-tags") {
             TextButton(onClick = { vm.openTag(null) }, contentPadding = PaddingValues(0.dp)) {
-                Text("← Tous les genres", color = Onde.Amber, fontSize = 14.sp)
+                Text("← Tous les genres", color = Onde.Accent, fontSize = 14.sp)
             }
         }
-        genreStations("tag:$opened", home, vm, onPlay)
+        genreStations("tag:$opened", home, vm, onPlay, onChangeCountry)
         return
     }
     item(key = "others-title") {
@@ -275,7 +293,7 @@ private fun SuggestionRow(items: List<Suggestion>, onPlay: (Station) -> Unit) {
 @Composable
 fun Loading() {
     Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(color = Onde.Amber, modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+        CircularProgressIndicator(color = Onde.Accent, modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
     }
 }
 
@@ -284,7 +302,7 @@ fun ErrorRetry(message: String, onRetry: () -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(message, fontSize = 14.sp, color = Onde.TextSoft)
         TextButton(onClick = onRetry, contentPadding = PaddingValues(0.dp)) {
-            Text("Réessayer", color = Onde.Amber)
+            Text("Réessayer", color = Onde.Accent)
         }
     }
 }

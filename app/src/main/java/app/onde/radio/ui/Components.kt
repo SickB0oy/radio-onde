@@ -98,7 +98,7 @@ fun Pill(label: String, selected: Boolean, onClick: () -> Unit) {
         Modifier
             .heightIn(min = 40.dp)
             .clip(RoundedCornerShape(20.dp))
-            .background(if (selected) Onde.Amber else Onde.Surface2)
+            .background(if (selected) Onde.Accent else Onde.Surface2)
             .clickable(role = Role.Tab, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center,

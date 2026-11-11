@@ -176,7 +176,7 @@ private fun HistoryRow(
                 icon = if (entry.saved) Icons.Rounded.Check else Icons.Rounded.Add,
                 contentDescription = if (entry.saved) "Retirer des titres enregistrés" else "Enregistrer le titre",
                 onClick = onToggleSaved,
-                tint = if (entry.saved) Onde.Amber else Onde.Text,
+                tint = if (entry.saved) Onde.Accent else Onde.Text,
                 iconSize = 18.dp,
             )
         }

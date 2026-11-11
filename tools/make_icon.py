@@ -5,7 +5,7 @@ from fontTools.ttLib import TTFont
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
 
-AMBER, INK, LIGHT = "#FFB547", "#0E1116", "#F3F4F6"
+AMBER, INK, LIGHT = "#2BD97C", "#000000", "#F3F4F6"  # vert Onde, noir, blanc
 FONT = "/usr/share/fonts/opentype/inter/Inter-Bold.otf"
 TEXT, BASELINE, MAX_W, TRACK = "RADIO ONDE", 72.5, 46.0, 0.10
 

@@ -85,12 +85,8 @@ fun PlayerScreen(
                 fontWeight = FontWeight.Medium,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
-            CircleIconButton(
-                icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                contentDescription = if (isFavorite) "Retirer des favoris" else "Ajouter aux favoris",
-                onClick = onToggleFavorite,
-                tint = Onde.Amber,
-            )
+            // Même largeur que le bouton retour, pour garder « En écoute » centré.
+            Spacer(Modifier.size(44.dp))
         }
 
         // Grande pochette
@@ -177,12 +173,21 @@ fun PlayerScreen(
 
         // Commandes
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Spacer(Modifier.size(56.dp))
+            // Favori, à portée de pouce à côté de lecture/pause.
+            CircleIconButton(
+                icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                contentDescription = if (isFavorite) "Retirer des favoris" else "Ajouter aux favoris",
+                onClick = onToggleFavorite,
+                size = 56.dp,
+                iconSize = 26.dp,
+                background = if (isFavorite) Onde.Accent.copy(alpha = 0.18f) else Onde.Surface,
+                tint = Onde.Accent,
+            )
             Box(
                 Modifier
                     .size(84.dp)
                     .clip(CircleShape)
-                    .background(Onde.Amber)
+                    .background(Onde.Accent)
                     .clickable(role = Role.Button, onClickLabel = if (state.isPlaying) "Pause" else "Lecture") { engine.togglePlay() },
                 contentAlignment = Alignment.Center,
             ) {
@@ -231,7 +236,7 @@ fun PlayerScreen(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Text("Historique", fontSize = 13.sp, color = Onde.Amber, fontWeight = FontWeight.SemiBold)
+                Text("Historique", fontSize = 13.sp, color = Onde.Accent, fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -260,7 +265,7 @@ private fun LiveStatus(state: PlayerUiState) {
             modifier = Modifier.weight(1f),
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
-            color = if (state.isLive) Onde.Text else Onde.Amber,
+            color = if (state.isLive) Onde.Text else Onde.Accent,
         )
         if (!state.isPlaying && !state.isBuffering) {
             Text("En pause : la suite est mise de côté", fontSize = 12.sp, color = Onde.Muted)
