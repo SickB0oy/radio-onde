@@ -96,6 +96,12 @@ class RadioBrowserApi(private val client: OkHttpClient) {
         mapOf("name" to query, "order" to "clickcount", "reverse" to "true", "limit" to "$limit"),
     )
 
+    /** Fiches à jour de plusieurs stations, par identifiant (pour rafraîchir les favoris). */
+    suspend fun byUuids(uuids: List<String>): List<Station> =
+        uuids.distinct().chunked(50).flatMap { chunk ->
+            stations("json/stations/byuuid", mapOf("uuids" to chunk.joinToString(",")))
+        }
+
     /** Signale une écoute à Radio-Browser (c'est ce qui alimente les tendances). */
     suspend fun countClick(uuid: String) {
         runCatching {

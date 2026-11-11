@@ -35,6 +35,8 @@ data class LibraryData(
     val countryCode: String? = null,
     /** Option « Retour en arrière (30 min) » : désactivée par défaut. */
     val timeShiftEnabled: Boolean = false,
+    /** Dernière mise à jour des fiches des favoris et stations récentes. */
+    val stationsRefreshedMs: Long = 0L,
 )
 
 /** Favoris, stations récentes, historique des titres et goûts, enregistrés dans un fichier JSON. */
@@ -88,6 +90,25 @@ class LibraryStore(private val file: File, private val scope: CoroutineScope) {
 
     fun setTimeShiftEnabled(enabled: Boolean) = edit { it.copy(timeShiftEnabled = enabled) }
 
+    /**
+     * Met à jour, au plus une fois par jour, les adresses des favoris et des stations récentes
+     * (une radio peut changer d'adresse de flux). Une station disparue de l'annuaire est gardée telle quelle.
+     */
+    suspend fun refreshStationsIfNeeded(api: RadioBrowserApi) {
+        val d = _data.value
+        if (System.currentTimeMillis() - d.stationsRefreshedMs < REFRESH_INTERVAL_MS) return
+        val uuids = (d.favorites + d.recent).map { it.uuid }
+        if (uuids.isEmpty()) return
+        val fresh = runCatching { api.byUuids(uuids) }.getOrNull()?.associateBy { it.uuid } ?: return
+        edit { cur ->
+            cur.copy(
+                favorites = cur.favorites.map { fresh[it.uuid] ?: it },
+                recent = cur.recent.map { fresh[it.uuid] ?: it },
+                stationsRefreshedMs = System.currentTimeMillis(),
+            )
+        }
+    }
+
     private fun Map<String, Double>.addTo(tags: List<String>, amount: Double): Map<String, Double> {
         if (tags.isEmpty()) return this
         val share = amount / tags.size
@@ -98,5 +119,6 @@ class LibraryStore(private val file: File, private val scope: CoroutineScope) {
 
     companion object {
         const val MAX_HISTORY = 1000
+        const val REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000L
     }
 }

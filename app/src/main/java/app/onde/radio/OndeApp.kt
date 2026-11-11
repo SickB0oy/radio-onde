@@ -7,6 +7,7 @@ import app.onde.radio.player.PlaybackEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -35,5 +36,7 @@ class OndeApp : Application() {
         api = RadioBrowserApi(http)
         library = LibraryStore(File(filesDir, "library.json"), appScope)
         engine = PlaybackEngine(this, http, api, library)
+        // Adresses à jour pour les favoris (au plus une fois par jour, en arrière-plan).
+        appScope.launch { library.refreshStationsIfNeeded(api) }
     }
 }
