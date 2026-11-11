@@ -22,8 +22,7 @@ data class TrackMark(
  * Reçoit le flux d'une station dans un [RingBuffer] et repère les titres.
  *
  * Le lecteur lit ce tampon plutôt que le réseau : c'est ce qui permet de mettre le direct
- * en pause. Par défaut le tampon est en mémoire et vidé au fur et à mesure de l'écoute ;
- * il ne garde 30 min (sur disque) que si l'option « Retour en arrière » est activée.
+ * en pause. Le tampon est en mémoire et vidé au fur et à mesure de l'écoute.
  */
 class StreamRecorder(
     private val client: OkHttpClient,
