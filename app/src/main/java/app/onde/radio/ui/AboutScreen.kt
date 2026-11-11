@@ -152,6 +152,11 @@ fun AboutScreen(vm: MainViewModel, onClose: () -> Unit) {
                 url = "https://www.radio-browser.info",
             )
             AboutCard(
+                title = "Natural Earth",
+                body = "Les contours des continents du globe (cartes du domaine public).",
+                url = "https://www.naturalearthdata.com",
+            )
+            AboutCard(
                 title = "Bibliothèques libres",
                 body = "AndroidX Media3 (ExoPlayer), Jetpack Compose, OkHttp, Coil, Kotlin et kotlinx.",
             )

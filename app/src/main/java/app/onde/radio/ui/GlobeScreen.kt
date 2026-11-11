@@ -35,12 +35,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PointMode
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.toSize
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -49,6 +52,11 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.onde.radio.data.Station
 import app.onde.radio.ui.theme.Onde
+import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -65,6 +73,22 @@ private class GeoPoint(val station: Station?, latDeg: Float, lonDeg: Float) {
 
     constructor(station: Station) : this(station, station.geoLat!!.toFloat(), station.geoLong!!.toFloat())
 }
+
+/**
+ * Contours des terres (Natural Earth 1:110m, domaine public), ajoutés à l'appli au moment de la
+ * compilation par tools/make_land.py. Liste vide si le fichier est absent : le globe marche quand même.
+ */
+private fun loadLand(context: Context): List<List<GeoPoint>> = runCatching {
+    val bytes = context.assets.open("land.bin").use { it.readBytes() }
+    val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+    List(buf.int) {
+        List(buf.int) {
+            val lon = buf.float
+            val lat = buf.float
+            GeoPoint(null, lat, lon)
+        }
+    }
+}.getOrDefault(emptyList())
 
 /** Méridiens et parallèles, calculés une seule fois. */
 private val GRID: List<GeoPoint> = buildList {
@@ -85,6 +109,9 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
     LaunchedEffect(Unit) { vm.loadGlobe() }
 
     val points = remember(globe.stations) { globe.stations.map(::GeoPoint) }
+    val context = LocalContext.current
+    var land by remember { mutableStateOf<List<List<GeoPoint>>>(emptyList()) }
+    LaunchedEffect(Unit) { land = withContext(Dispatchers.IO) { loadLand(context) } }
     var centerLon by remember { mutableFloatStateOf(2f) }   // départ : l'Europe
     var centerLat by remember { mutableFloatStateOf(30f) }
     var zoom by remember { mutableFloatStateOf(1f) }
@@ -176,10 +203,30 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
             for (g in GRID) project(g)?.let(grid::add)
             drawPoints(grid, PointMode.Points, Color.White.copy(alpha = 0.10f), strokeWidth = 1.5.dp.toPx(), cap = StrokeCap.Round)
 
+            // Les continents : on trace chaque contour, en coupant là où il passe derrière le globe.
+            if (land.isNotEmpty()) {
+                val coast = Path()
+                for (ring in land) {
+                    var penDown = false
+                    for (pt in ring) {
+                        val o = project(pt)
+                        if (o == null) {
+                            penDown = false
+                        } else if (penDown) {
+                            coast.lineTo(o.x, o.y)
+                        } else {
+                            coast.moveTo(o.x, o.y)
+                            penDown = true
+                        }
+                    }
+                }
+                drawPath(coast, Onde.Accent.copy(alpha = 0.55f), style = Stroke(width = 1.2.dp.toPx(), join = StrokeJoin.Round))
+            }
+
             // Les stations
             val dots = ArrayList<Offset>(points.size)
             for (p in points) project(p)?.let(dots::add)
-            drawPoints(dots, PointMode.Points, Onde.Accent.copy(alpha = 0.75f), strokeWidth = dotPx, cap = StrokeCap.Round)
+            drawPoints(dots, PointMode.Points, Color.White.copy(alpha = 0.7f), strokeWidth = dotPx, cap = StrokeCap.Round)
 
             // Station en écoute et station touchée
             val playingUuid = player.station?.uuid

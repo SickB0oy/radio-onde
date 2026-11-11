@@ -10,3 +10,6 @@ captures/
 # Clé de signature : uniquement dans les secrets GitHub
 *.keystore
 *.jks
+
+# Carte du globe : générée à la compilation (tools/make_land.py)
+app/src/main/assets/land.bin
