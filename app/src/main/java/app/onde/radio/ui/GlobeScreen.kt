@@ -64,12 +64,21 @@ import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.PI
+import kotlin.math.acos
+import kotlin.math.asin
+import kotlin.math.sqrt
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.sin
 
 private const val DEG = (PI / 180).toFloat()
+
+/** Zoom maximal (×40 : on voit une région). */
+private const val MAX_ZOOM = 40f
+
+/** À partir de ce zoom, on dessine la carte détaillée (Natural Earth 1:50m). */
+private const val DETAIL_ZOOM = 4f
 
 /** Un point sur la sphère (trigonométrie précalculée) : une station, ou un point de la grille. */
 private class GeoPoint(val station: Station?, val latDeg: Float, val lonDeg: Float) {
@@ -84,17 +93,45 @@ private class GeoPoint(val station: Station?, val latDeg: Float, val lonDeg: Flo
  * Contours des terres (Natural Earth 1:110m, domaine public), ajoutés à l'appli au moment de la
  * compilation par tools/make_land.py. Liste vide si le fichier est absent : le globe marche quand même.
  */
-private fun loadLand(context: Context): List<List<GeoPoint>> = runCatching {
-    val bytes = context.assets.open("land.bin").use { it.readBytes() }
+private fun loadLand(context: Context, file: String): List<LandRing> = runCatching {
+    val bytes = context.assets.open(file).use { it.readBytes() }
     val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
     List(buf.int) {
-        List(buf.int) {
-            val lon = buf.float
-            val lat = buf.float
-            GeoPoint(null, lat, lon)
-        }
+        LandRing(
+            List(buf.int) {
+                val lon = buf.float
+                val lat = buf.float
+                GeoPoint(null, lat, lon)
+            }
+        )
     }
 }.getOrDefault(emptyList())
+
+/**
+ * Un contour de côte, avec son centre et son « rayon » (en angle sur la sphère) : permet de
+ * sauter d'un coup les contours hors de l'écran quand on est très zoomé.
+ */
+private class LandRing(val points: List<GeoPoint>) {
+    val cx: Float
+    val cy: Float
+    val cz: Float
+    val radius: Float
+
+    init {
+        var x = 0f; var y = 0f; var z = 0f
+        for (p in points) {
+            x += p.cosLat * cos(p.lon); y += p.cosLat * sin(p.lon); z += p.sinLat
+        }
+        val n = sqrt(x * x + y * y + z * z).coerceAtLeast(1e-6f)
+        cx = x / n; cy = y / n; cz = z / n
+        var maxAngle = 0f
+        for (p in points) {
+            val dot = cx * p.cosLat * cos(p.lon) + cy * p.cosLat * sin(p.lon) + cz * p.sinLat
+            maxAngle = maxOf(maxAngle, acos(dot.coerceIn(-1f, 1f)))
+        }
+        radius = maxAngle
+    }
+}
 
 /**
  * Rectangle englobant de chaque pays (Natural Earth, domaine public), généré à la compilation
@@ -139,11 +176,13 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
     LaunchedEffect(Unit) { vm.loadGlobe() }
 
     val context = LocalContext.current
-    var land by remember { mutableStateOf<List<List<GeoPoint>>>(emptyList()) }
+    var land by remember { mutableStateOf<List<LandRing>>(emptyList()) }
+    var landDetailed by remember { mutableStateOf<List<LandRing>>(emptyList()) }
     var boxes by remember { mutableStateOf<Map<String, FloatArray>>(emptyMap()) }
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
-            land = loadLand(context)
+            land = loadLand(context, "land.bin")
+            landDetailed = loadLand(context, "land50.bin")
             boxes = loadCountryBoxes(context)
         }
     }
@@ -204,7 +243,7 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
                         val r = radius().coerceAtLeast(1f)
                         centerLon = (centerLon - pan.x / r / DEG).let { if (it > 180f) it - 360f else if (it < -180f) it + 360f else it }
                         centerLat = (centerLat + pan.y / r / DEG).coerceIn(-80f, 80f)
-                        zoom = (zoom * zoomChange).coerceIn(1f, 8f)
+                        zoom = (zoom * zoomChange).coerceIn(1f, MAX_ZOOM)
                     }
                 }
                 .pointerInput(points) {
@@ -242,11 +281,23 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
             drawCircle(Onde.Accent.copy(alpha = 0.35f), radius = r, center = c, style = Stroke(width = 1.dp.toPx()))
 
             // Les continents : on trace chaque contour, en coupant là où il passe derrière le globe.
-            if (land.isNotEmpty()) {
+            // Carte détaillée quand on zoome (si présente), et seulement les contours visibles.
+            val rings = if (zoom >= DETAIL_ZOOM && landDetailed.isNotEmpty()) landDetailed else land
+            if (rings.isNotEmpty()) {
+                val lat0r = centerLat * DEG
+                val lon0r = centerLon * DEG
+                val vx = cos(lat0r) * cos(lon0r)
+                val vy = cos(lat0r) * sin(lon0r)
+                val vz = sin(lat0r)
+                // Angle entre le centre de l'écran et son coin, vu depuis le centre de la Terre.
+                val halfDiag = hypot(size.width, size.height) / 2
+                val viewAngle = if (halfDiag >= radius()) (PI / 2).toFloat() else asin(halfDiag / radius())
                 val coast = Path()
-                for (ring in land) {
+                for (ring in rings) {
+                    val dot = (vx * ring.cx + vy * ring.cy + vz * ring.cz).coerceIn(-1f, 1f)
+                    if (acos(dot) - ring.radius > viewAngle) continue
                     var penDown = false
-                    for (pt in ring) {
+                    for (pt in ring.points) {
                         val o = project(pt)
                         if (o == null) {
                             penDown = false

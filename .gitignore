@@ -14,3 +14,4 @@ captures/
 # Carte du globe : générée à la compilation (tools/make_land.py)
 app/src/main/assets/land.bin
 app/src/main/assets/countries.txt
+app/src/main/assets/land50.bin

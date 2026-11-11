@@ -34,6 +34,10 @@ jobs:
           curl -sSfL "$BASE/v5.1.2/geojson/ne_110m_land.geojson" -o /tmp/land.geojson \
             || curl -sSfL "$BASE/master/geojson/ne_110m_land.geojson" -o /tmp/land.geojson
           python3 tools/make_land.py /tmp/land.geojson app/src/main/assets/land.bin
+          # Version détaillée (1:50m), utilisée quand on zoome sur le globe.
+          curl -sSfL "$BASE/v5.1.2/geojson/ne_50m_land.geojson" -o /tmp/land50.geojson \
+            || curl -sSfL "$BASE/master/geojson/ne_50m_land.geojson" -o /tmp/land50.geojson
+          python3 tools/make_land.py /tmp/land50.geojson app/src/main/assets/land50.bin
           curl -sSfL "$BASE/v5.1.2/geojson/ne_110m_admin_0_countries.geojson" -o /tmp/countries.geojson \
             || curl -sSfL "$BASE/master/geojson/ne_110m_admin_0_countries.geojson" -o /tmp/countries.geojson
           python3 tools/make_countries.py /tmp/countries.geojson app/src/main/assets/countries.txt
