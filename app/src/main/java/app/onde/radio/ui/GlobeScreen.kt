@@ -32,6 +32,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -45,7 +46,10 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -152,6 +156,8 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
     var selected by remember { mutableStateOf<Station?>(null) }
     var canvasSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
     val tapRadiusPx = with(LocalDensity.current) { 28.dp.toPx() }
+    val textMeasurer = rememberTextMeasurer()
+    val labelStyle = TextStyle(color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
     val dotPx = with(LocalDensity.current) { 2.6.dp.toPx() }
     val midDotPx = with(LocalDensity.current) { 3.6.dp.toPx() }
     val bigDotPx = with(LocalDensity.current) { 5.dp.toPx() }
@@ -279,7 +285,32 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
                 drawCircle(Color.White.copy(alpha = alpha), radius = dot / 2, center = Offset(x, y))
             }
 
-            // Station en écoute et station touchée
+            // Station touchée : un anneau et, en petit, la ville et le pays à côté du point.
+            selected?.let { sel ->
+                val sp = points.firstOrNull { it.station?.uuid == sel.uuid } ?: return@let
+                val o = project(sp) ?: return@let
+                drawCircle(Onde.Accent, radius = 7.dp.toPx(), center = o, style = Stroke(2.dp.toPx()))
+                val place = sel.placeLabel
+                if (place.isNotBlank()) {
+                    val layout = textMeasurer.measure(place, labelStyle)
+                    val pad = 4.dp.toPx()
+                    val gap = 10.dp.toPx()
+                    val w = layout.size.width + 2 * pad
+                    val h = layout.size.height + 2 * pad
+                    // À droite du point, ou à gauche s'il n'y a pas la place.
+                    val left = if (o.x + gap + w < size.width) o.x + gap else o.x - gap - w
+                    val top = o.y - h / 2
+                    drawRoundRect(
+                        color = Color.Black.copy(alpha = 0.65f),
+                        topLeft = Offset(left, top),
+                        size = androidx.compose.ui.geometry.Size(w, h),
+                        cornerRadius = CornerRadius(6.dp.toPx()),
+                    )
+                    drawText(layout, topLeft = Offset(left + pad, top + pad))
+                }
+            }
+
+            // Station en écoute
             val playingUuid = player.station?.uuid
             points.firstOrNull { it.station?.uuid == playingUuid }?.let { p ->
                 project(p)?.let { o ->
@@ -340,9 +371,12 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
                 StationArt(station, 52.dp, 12.dp)
                 Column(Modifier.weight(1f)) {
                     Text(station.displayName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (station.placeLabel.isNotBlank()) {
+                        Text("📍 " + station.placeLabel, fontSize = 11.sp, color = Onde.TextSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                     val line = player.current?.takeIf { isCurrent }
                         ?.let { listOf(it.title, it.artist).filter { s -> s.isNotBlank() }.joinToString(" · ") }
-                        ?: listOf(station.subtitle, station.country).filter { it.isNotBlank() }.distinct().joinToString(" · ")
+                        ?: station.subtitle
                     Text(line, fontSize = 12.sp, color = if (isCurrent && player.current != null) Onde.Accent else Onde.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 CircleIconButton(

@@ -50,6 +50,10 @@ data class Station(
             return listOf(genres, place).filter { it.isNotBlank() }.joinToString(" · ")
         }
 
+    /** « Ville ou région, Pays » quand l'annuaire les connaît. */
+    val placeLabel: String
+        get() = listOf(state.trim(), country.trim()).filter { it.isNotBlank() }.distinct().joinToString(", ")
+
     val qualityLabel: String
         get() = listOf(codec.uppercase(), if (bitrate > 0) "$bitrate kbit/s" else "")
             .filter { it.isNotBlank() }.joinToString(" · ")
