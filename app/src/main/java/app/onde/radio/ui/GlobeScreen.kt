@@ -104,6 +104,13 @@ private fun loadCountryBoxes(context: Context): Map<String, FloatArray> = runCat
     }.toMap()
 }.getOrDefault(emptyMap())
 
+/**
+ * Nombre de stations affichées selon le zoom : 150 vue de loin, puis de plus en plus
+ * (au carré du zoom, comme la surface visible) jusqu'à toutes les afficher.
+ */
+private fun visibleCount(total: Int, zoom: Float): Int =
+    minOf(total, (150f * zoom * zoom).toInt())
+
 /** Garde une station si son pays est inconnu, ou si elle tombe dans son pays (avec une marge). */
 private fun plausible(p: GeoPoint, boxes: Map<String, FloatArray>): Boolean {
     val box = boxes[p.station?.countryCode?.uppercase() ?: return true] ?: return true
@@ -145,9 +152,9 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
     var selected by remember { mutableStateOf<Station?>(null) }
     var canvasSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
     val tapRadiusPx = with(LocalDensity.current) { 28.dp.toPx() }
-    val dotPx = with(LocalDensity.current) { 2.2.dp.toPx() }
-    val bigDotPx = with(LocalDensity.current) { 3.6.dp.toPx() }
-    val cellPx = with(LocalDensity.current) { 5.dp.toPx() }
+    val dotPx = with(LocalDensity.current) { 2.6.dp.toPx() }
+    val midDotPx = with(LocalDensity.current) { 3.6.dp.toPx() }
+    val bigDotPx = with(LocalDensity.current) { 5.dp.toPx() }
 
     // Rotation lente quand on ne touche à rien.
     LaunchedEffect(Unit) {
@@ -197,7 +204,7 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
                         lastTouch = System.currentTimeMillis()
                         var best: GeoPoint? = null
                         var bestDist = tapRadiusPx
-                        for (p in points) {
+                        for (p in points.take(visibleCount(points.size, zoom))) {
                             val o = project(p) ?: continue
                             val d = hypot(o.x - tap.x, o.y - tap.y)
                             if (d < bestDist) {
@@ -246,35 +253,31 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
                 drawPath(coast, Onde.Accent.copy(alpha = 0.55f), style = Stroke(width = 1.2.dp.toPx(), join = StrokeJoin.Round))
             }
 
-            // Les stations : un seul point par petite zone de l'écran (plus lisible), les plus
-            // écoutées en plus gros, et celles proches du bord du globe plus discrètes.
+            // Les stations : seulement les plus écoutées quand on est loin, de plus en plus quand on
+            // zoome. Ce choix ne dépend que du zoom (pas de la position à l'écran) : rien ne clignote
+            // quand la Terre tourne. Les plus écoutées sont plus grosses ; près du bord, plus discrètes.
             val r0 = radius()
             val lat0 = centerLat * DEG
             val sinLat0 = sin(lat0)
             val cosLat0 = cos(lat0)
-            val taken = HashSet<Long>(points.size)
-            val popular = ArrayList<Offset>()
-            val near = ArrayList<Offset>(points.size)
-            val far = ArrayList<Offset>(points.size)
-            points.forEachIndexed { index, p ->
+            val count = visibleCount(points.size, zoom)
+            for (index in 0 until count) {
+                val p = points[index]
                 val dLon = p.lon - centerLon * DEG
                 val cosD = cos(dLon)
                 val z = sinLat0 * p.sinLat + cosLat0 * p.cosLat * cosD
-                if (z <= 0f) return@forEachIndexed
+                if (z <= 0f) continue
                 val x = c.x + r0 * p.cosLat * sin(dLon)
                 val y = c.y - r0 * (cosLat0 * p.sinLat - sinLat0 * p.cosLat * cosD)
-                val cell = ((x / cellPx).toLong() shl 32) or ((y / cellPx).toLong() and 0xffffffffL)
-                if (!taken.add(cell)) return@forEachIndexed
-                val o = Offset(x, y)
-                when {
-                    index < 150 -> popular += o
-                    z > 0.35f -> near += o
-                    else -> far += o
+                val dot = when {
+                    index < 40 -> bigDotPx
+                    index < 250 -> midDotPx
+                    else -> dotPx
                 }
+                // Fondu continu vers le bord du globe (pas de palier qui saute).
+                val alpha = 0.25f + 0.75f * (z / 0.5f).coerceAtMost(1f)
+                drawCircle(Color.White.copy(alpha = alpha), radius = dot / 2, center = Offset(x, y))
             }
-            drawPoints(far, PointMode.Points, Color.White.copy(alpha = 0.30f), strokeWidth = dotPx, cap = StrokeCap.Round)
-            drawPoints(near, PointMode.Points, Color.White.copy(alpha = 0.75f), strokeWidth = dotPx, cap = StrokeCap.Round)
-            drawPoints(popular, PointMode.Points, Color.White, strokeWidth = bigDotPx, cap = StrokeCap.Round)
 
             // Station en écoute et station touchée
             val playingUuid = player.station?.uuid
