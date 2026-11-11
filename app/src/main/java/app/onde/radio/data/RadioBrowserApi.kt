@@ -90,6 +90,13 @@ class RadioBrowserApi(private val client: OkHttpClient) {
             .filter { it.streamUrl.startsWith("http") }
             .distinctBy { it.name.lowercase().trim() }
 
+    /** Les stations les plus écoutées qui ont une position : de quoi dessiner le globe. */
+    suspend fun geoStations(limit: Int = 4000): List<Station> =
+        stations(
+            "json/stations/search",
+            mapOf("has_geo_info" to "true", "order" to "clickcount", "reverse" to "true", "limit" to "$limit"),
+        ).filter { it.hasGeo }
+
     /** Tous les genres de l'annuaire, des plus fournis aux moins fournis. */
     suspend fun topTags(limit: Int = 300): List<Tag> =
         json.decodeFromString<List<Tag>>(

@@ -19,15 +19,18 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Forward30
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +70,18 @@ fun PlayerScreen(
     }
     val context = LocalContext.current
     val current = state.current
+    var showSleepTimer by remember { mutableStateOf(false) }
+
+    if (showSleepTimer) {
+        SleepTimerDialog(
+            active = state.sleepEndMs > 0,
+            onPick = { minutes ->
+                engine.setSleepTimer(minutes)
+                showSleepTimer = false
+            },
+            onDismiss = { showSleepTimer = false },
+        )
+    }
 
     Column(
         Modifier
@@ -208,13 +223,24 @@ fun PlayerScreen(
             )
         }
 
-        WideButton(
-            label = "Revenir au direct",
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !state.isLive,
-            onClick = engine::goLive,
-            dotColor = Onde.Red,
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            WideButton(
+                label = "Revenir au direct",
+                modifier = Modifier.weight(1f),
+                enabled = !state.isLive,
+                onClick = engine::goLive,
+                dotColor = Onde.Red,
+            )
+            val sleepLeftMs = state.sleepEndMs - System.currentTimeMillis()
+            WideButton(
+                label = if (state.sleepEndMs > 0) "Arrêt dans ${(sleepLeftMs / 60_000 + 1).coerceAtLeast(1)} min" else "Minuteur",
+                modifier = Modifier.weight(1f),
+                enabled = true,
+                onClick = { showSleepTimer = true },
+                icon = Icons.Rounded.Bedtime,
+                highlighted = state.sleepEndMs > 0,
+            )
+        }
 
         state.previous?.let { prev ->
             Row(
@@ -287,7 +313,7 @@ private fun WideButton(
         modifier
             .height(48.dp)
             .clip(RoundedCornerShape(16.dp))
-            .background(if (highlighted) Onde.Red.copy(alpha = 0.18f) else Onde.Surface2)
+            .background(if (highlighted) Onde.Accent.copy(alpha = 0.18f) else Onde.Surface2)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
@@ -298,8 +324,51 @@ private fun WideButton(
             Box(Modifier.size(8.dp).clip(CircleShape).background(dotColor.copy(alpha = alpha)))
         }
         if (icon != null) {
-            Icon(icon, null, tint = (if (highlighted) Onde.Red else Onde.Text).copy(alpha = alpha), modifier = Modifier.size(16.dp))
+            Icon(icon, null, tint = (if (highlighted) Onde.Accent else Onde.Text).copy(alpha = alpha), modifier = Modifier.size(16.dp))
         }
         Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Onde.Text.copy(alpha = alpha), maxLines = 1)
     }
+}
+
+@Composable
+private fun SleepTimerDialog(active: Boolean, onPick: (Int?) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Onde.Surface2,
+        title = { Text("Minuteur de veille") },
+        text = {
+            Column {
+                Text(
+                    "La radio baisse doucement pendant 30 secondes, puis s'arrête.",
+                    fontSize = 13.sp,
+                    color = Onde.TextSoft,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                listOf(15, 30, 45, 60, 90).forEach { minutes ->
+                    Text(
+                        "$minutes minutes",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(minutes) }
+                            .padding(vertical = 14.dp),
+                        fontSize = 16.sp,
+                    )
+                }
+                if (active) {
+                    Text(
+                        "Désactiver le minuteur",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onPick(null) }
+                            .padding(vertical = 14.dp),
+                        fontSize = 16.sp,
+                        color = Onde.Red,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Fermer", color = Onde.Accent) }
+        },
+    )
 }

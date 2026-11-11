@@ -19,9 +19,30 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.TimePickerDefaults
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.onde.radio.data.AlarmSettings
+import app.onde.radio.data.Station
+import java.util.Calendar
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,8 +60,9 @@ private const val AUTHOR_URL = "https://github.com/SickB0oy"
 private const val REPO_URL = "https://github.com/SickB0oy/radio-onde"
 
 @Composable
-fun AboutScreen(onClose: () -> Unit) {
+fun AboutScreen(vm: MainViewModel, onClose: () -> Unit) {
     val context = LocalContext.current
+    val library by vm.libraryData.collectAsStateWithLifecycle()
     val version = remember {
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }
             .getOrNull().orEmpty()
@@ -54,9 +76,26 @@ fun AboutScreen(onClose: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("À propos", modifier = Modifier.weight(1f), fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            Text("Réglages", modifier = Modifier.weight(1f), fontSize = 30.sp, fontWeight = FontWeight.Bold)
             CircleIconButton(Icons.Rounded.Close, "Fermer", onClose)
         }
+
+        // ------------------------------------------------------------ Son
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionTitle("Son")
+            SwitchRow(
+                title = "Volume égalisé",
+                body = "Toutes les stations sonnent à peu près aussi fort : plus de saut de volume en changeant de radio.",
+                checked = library.volumeLeveling,
+                onChange = vm.engine::setVolumeLeveling,
+            )
+        }
+
+        // ------------------------------------------------------------ Réveil
+        AlarmSection(vm, library.alarm, library.favorites + library.recent)
+
+        // ------------------------------------------------------------ À propos
+        SectionTitle("À propos")
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Image(
@@ -163,5 +202,168 @@ private fun LinkRow(label: String, url: String) {
 private fun Context.openUrl(url: String) {
     runCatching {
         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+}
+
+@Composable
+private fun SwitchRow(title: String, body: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Onde.Surface2)
+            .clickable(role = Role.Switch) { onChange(!checked) }
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(body, fontSize = 13.sp, color = Onde.TextSoft)
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Onde.Ink,
+                checkedTrackColor = Onde.Accent,
+                uncheckedThumbColor = Onde.Muted,
+                uncheckedTrackColor = Onde.Surface,
+                uncheckedBorderColor = Onde.Line,
+            ),
+        )
+    }
+}
+
+/** Jours affichés du lundi au dimanche (valeurs java.util.Calendar). */
+private val WEEK = listOf(
+    Calendar.MONDAY to "L", Calendar.TUESDAY to "M", Calendar.WEDNESDAY to "M", Calendar.THURSDAY to "J",
+    Calendar.FRIDAY to "V", Calendar.SATURDAY to "S", Calendar.SUNDAY to "D",
+)
+private val WEEK_NAMES = mapOf(
+    Calendar.MONDAY to "lundi", Calendar.TUESDAY to "mardi", Calendar.WEDNESDAY to "mercredi",
+    Calendar.THURSDAY to "jeudi", Calendar.FRIDAY to "vendredi", Calendar.SATURDAY to "samedi", Calendar.SUNDAY to "dimanche",
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AlarmSection(vm: MainViewModel, alarm: AlarmSettings, candidates: List<Station>) {
+    var pickTime by remember { mutableStateOf(false) }
+    var pickStation by remember { mutableStateOf(false) }
+    val choices = remember(candidates) { candidates.distinctBy { it.uuid } }
+
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionTitle("Réveil radio")
+        SwitchRow(
+            title = "Me réveiller avec la radio",
+            body = when {
+                alarm.station == null -> "Choisis d'abord une station ci-dessous."
+                alarm.enabled -> "Le son monte doucement pendant une minute."
+                else -> "Désactivé."
+            },
+            checked = alarm.enabled && alarm.station != null,
+            onChange = { on -> vm.updateAlarm { it.copy(enabled = on && it.station != null) } },
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            SettingButton(
+                label = "Heure",
+                value = "%02d:%02d".format(alarm.hour, alarm.minute),
+                modifier = Modifier.weight(1f),
+            ) { pickTime = true }
+            SettingButton(
+                label = "Station",
+                value = alarm.station?.displayName ?: "Choisir",
+                modifier = Modifier.weight(2f),
+            ) { pickStation = true }
+        }
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            WEEK.forEach { (day, letter) ->
+                val on = day in alarm.days
+                Box(
+                    Modifier
+                        .size(42.dp)
+                        .clip(CircleShape)
+                        .background(if (on) Onde.Accent else Onde.Surface2)
+                        .clickable(role = Role.Checkbox, onClickLabel = WEEK_NAMES[day]) {
+                            vm.updateAlarm { a -> a.copy(days = if (on) a.days - day else a.days + day) }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(letter, fontWeight = FontWeight.SemiBold, color = if (on) Onde.Ink else Onde.TextSoft)
+                }
+            }
+        }
+    }
+
+    if (pickTime) {
+        val timeState = rememberTimePickerState(initialHour = alarm.hour, initialMinute = alarm.minute, is24Hour = true)
+        AlertDialog(
+            onDismissRequest = { pickTime = false },
+            containerColor = Onde.Surface2,
+            title = { Text("Heure du réveil") },
+            text = {
+                TimePicker(
+                    state = timeState,
+                    colors = TimePickerDefaults.colors(
+                        clockDialColor = Onde.Surface,
+                        selectorColor = Onde.Accent,
+                        timeSelectorSelectedContainerColor = Onde.Accent,
+                        timeSelectorSelectedContentColor = Onde.Ink,
+                        timeSelectorUnselectedContainerColor = Onde.Surface,
+                    ),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.updateAlarm { it.copy(hour = timeState.hour, minute = timeState.minute) }
+                    pickTime = false
+                }) { Text("OK", color = Onde.Accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pickTime = false }) { Text("Annuler", color = Onde.TextSoft) }
+            },
+        )
+    }
+
+    if (pickStation) {
+        AlertDialog(
+            onDismissRequest = { pickStation = false },
+            containerColor = Onde.Surface2,
+            title = { Text("Station du réveil") },
+            text = {
+                if (choices.isEmpty()) {
+                    Text("Ajoute d'abord une station à tes favoris (le cœur dans le lecteur).", color = Onde.TextSoft)
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                        items(choices, key = { it.uuid }) { station ->
+                            StationRow(station, onClick = {
+                                vm.updateAlarm { it.copy(station = station) }
+                                pickStation = false
+                            })
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { pickStation = false }) { Text("Fermer", color = Onde.Accent) }
+            },
+        )
+    }
+}
+
+@Composable
+private fun SettingButton(label: String, value: String, modifier: Modifier, onClick: () -> Unit) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(Onde.Surface2)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(label, fontSize = 12.sp, color = Onde.Muted)
+        Text(value, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = Onde.Accent, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }

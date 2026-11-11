@@ -88,6 +88,14 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
     var aboutOpen by rememberSaveable { mutableStateOf(false) }
+    var zappingOpen by rememberSaveable { mutableStateOf(false) }
+    var globeOpen by rememberSaveable { mutableStateOf(false) }
+    val closeOverlays = {
+        aboutOpen = false
+        zappingOpen = false
+        globeOpen = false
+        searchOpen = false
+    }
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(player.message) {
@@ -107,12 +115,9 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
         }
     }
 
-    BackHandler(enabled = aboutOpen || searchOpen || tab != Tab.Home) {
-        when {
-            aboutOpen -> aboutOpen = false
-            searchOpen -> searchOpen = false
-            else -> tab = Tab.Home
-        }
+    val overlayOpen = aboutOpen || zappingOpen || globeOpen || searchOpen
+    BackHandler(enabled = overlayOpen || tab != Tab.Home) {
+        if (overlayOpen) closeOverlays() else tab = Tab.Home
     }
 
     Scaffold(
@@ -120,7 +125,7 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             Column(Modifier.background(Onde.Ink).navigationBarsPadding()) {
-                if (player.station != null && tab != Tab.Player && !searchOpen) {
+                if (player.station != null && tab != Tab.Player && !searchOpen && !zappingOpen && !globeOpen) {
                     MiniPlayer(
                         state = player,
                         onOpen = { tab = Tab.Player },
@@ -131,20 +136,21 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
                     selected = tab,
                     searchOpen = searchOpen,
                     onSearch = {
+                        closeOverlays()
                         searchOpen = true
-                        aboutOpen = false
                     },
                 ) {
                     tab = it
-                    searchOpen = false
-                    aboutOpen = false
+                    closeOverlays()
                 }
             }
         },
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when {
-                aboutOpen -> AboutScreen(onClose = { aboutOpen = false })
+                aboutOpen -> AboutScreen(vm = vm, onClose = { aboutOpen = false })
+                zappingOpen -> ZappingScreen(vm = vm, onClose = { zappingOpen = false })
+                globeOpen -> GlobeScreen(vm = vm, onClose = { globeOpen = false })
                 searchOpen -> SearchScreen(
                     vm = vm,
                     onPlay = {
@@ -154,7 +160,13 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
                     },
                     onClose = { searchOpen = false },
                 )
-                tab == Tab.Home -> HomeScreen(vm = vm, onPlay = vm::play, onAbout = { aboutOpen = true })
+                tab == Tab.Home -> HomeScreen(
+                    vm = vm,
+                    onPlay = vm::play,
+                    onSettings = { aboutOpen = true },
+                    onZapping = { zappingOpen = true },
+                    onGlobe = { globeOpen = true },
+                )
                 tab == Tab.Player -> PlayerScreen(
                     state = player,
                     isFavorite = player.station?.let { s -> library.favorites.any { it.uuid == s.uuid } } == true,

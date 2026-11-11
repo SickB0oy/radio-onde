@@ -35,6 +35,19 @@ data class LibraryData(
     val countryCode: String? = null,
     /** Dernière mise à jour des fiches des favoris et stations récentes. */
     val stationsRefreshedMs: Long = 0L,
+    /** Volume égalisé entre les stations (activé par défaut). */
+    val volumeLeveling: Boolean = true,
+    val alarm: AlarmSettings = AlarmSettings(),
+)
+
+/** Réveil radio. [days] utilise les valeurs de java.util.Calendar (DIMANCHE = 1 … SAMEDI = 7). */
+@Serializable
+data class AlarmSettings(
+    val enabled: Boolean = false,
+    val hour: Int = 7,
+    val minute: Int = 0,
+    val days: List<Int> = listOf(2, 3, 4, 5, 6),
+    val station: Station? = null,
 )
 
 /** Favoris, stations récentes, historique des titres et goûts, enregistrés dans un fichier JSON. */
@@ -85,6 +98,10 @@ class LibraryStore(private val file: File, private val scope: CoroutineScope) {
     }
 
     fun setCountry(code: String) = edit { it.copy(countryCode = code) }
+
+    fun setVolumeLeveling(enabled: Boolean) = edit { it.copy(volumeLeveling = enabled) }
+
+    fun updateAlarm(transform: (AlarmSettings) -> AlarmSettings) = edit { it.copy(alarm = transform(it.alarm)) }
 
     /**
      * Met à jour, au plus une fois par jour, les adresses des favoris et des stations récentes

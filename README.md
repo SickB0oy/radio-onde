@@ -6,6 +6,10 @@ Appli radio gratuite, sans pub ni pistage, qui va plus loin que les autres :
 
 - **Pause du direct** : en pause, la suite est mise de côté en mémoire pour reprendre là où tu t'étais arrêté,
   puis « +30 s » ou « Revenir au direct » pour rattraper. Pendant l'écoute, rien n'est gardé, et rien n'est écrit sur le téléphone.
+- **Zapping** : on glisse vers le haut pour passer d'une station à l'autre dans le style choisi.
+- **Globe des radios** : une Terre en 3D où chaque point est une station ; on touche un point pour l'écouter.
+- **Volume égalisé** : toutes les stations sonnent à peu près aussi fort.
+- **Réveil radio** (heure, jours, station, son qui monte doucement) et **minuteur de veille** (fondu de 30 s).
 - **Historique des titres** de toutes les stations (seulement les noms des morceaux, jamais l'audio).
 - **Découverte intelligente** : suggestions calculées sur le téléphone selon ton temps d'écoute par genre, tendances par pays, ambiances.
 - Notification, écran verrouillé et Bluetooth via Media3.

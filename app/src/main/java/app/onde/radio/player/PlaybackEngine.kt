@@ -15,7 +15,10 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.extractor.metadata.icy.IcyInfo
 import androidx.media3.extractor.metadata.id3.TextInformationFrame
@@ -27,6 +30,7 @@ import app.onde.radio.data.RadioBrowserApi
 import app.onde.radio.data.Station
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -53,6 +57,8 @@ data class PlayerUiState(
     val current: TrackMark? = null,
     val previous: TrackMark? = null,
     val message: String? = null,
+    /** Heure d'arrêt du minuteur de veille (0 = pas de minuteur). */
+    val sleepEndMs: Long = 0,
 ) {
     val isLive: Boolean get() = delayMs < PlaybackEngine.LIVE_THRESHOLD_MS
 }
@@ -111,7 +117,25 @@ class PlaybackEngine(
         }
     }
 
-    val player: ExoPlayer = ExoPlayer.Builder(context)
+    /** Volume égalisé entre les stations. */
+    private val leveler = LevelingAudioProcessor().apply { enabled = library.data.value.volumeLeveling }
+
+    private val renderersFactory = object : DefaultRenderersFactory(context) {
+        override fun buildAudioSink(
+            context: Context,
+            enableFloatOutput: Boolean,
+            enableAudioTrackPlaybackParams: Boolean,
+        ): AudioSink = DefaultAudioSink.Builder(context)
+            .setEnableFloatOutput(false)
+            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            .setAudioProcessors(arrayOf(leveler))
+            .build()
+    }
+
+    private var sleepJob: Job? = null
+    private var fadeInJob: Job? = null
+
+    val player: ExoPlayer = ExoPlayer.Builder(context, renderersFactory)
         .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
         .setAudioAttributes(
             AudioAttributes.Builder()
@@ -188,7 +212,7 @@ class PlaybackEngine(
             startAbs = 0L
             liveFloorMs = Long.MAX_VALUE
             playingSinceStartMs = 0L
-            _state.value = PlayerUiState(station = station, isBuffering = true)
+            _state.value = PlayerUiState(station = station, isBuffering = true, sleepEndMs = _state.value.sleepEndMs)
             library.onStationPlayed(station)
             scope.launch { api.countClick(station.uuid) }
 
@@ -269,6 +293,48 @@ class PlaybackEngine(
         val floor = if (liveFloorMs == Long.MAX_VALUE) 0L else liveFloorMs
         val target = (rec.buffer.written - (delayMs + floor) / 1000.0 * bps).toLong().coerceIn(min, max)
         prepareAt(target)
+    }
+
+    fun setVolumeLeveling(enabled: Boolean) {
+        leveler.enabled = enabled
+        library.setVolumeLeveling(enabled)
+    }
+
+    /** Minuteur de veille : baisse le son pendant 30 s puis met en pause. null = annuler. */
+    fun setSleepTimer(minutes: Int?) {
+        sleepJob?.cancel()
+        player.volume = 1f
+        if (minutes == null) {
+            _state.update { it.copy(sleepEndMs = 0) }
+            return
+        }
+        val end = System.currentTimeMillis() + minutes * 60_000L
+        _state.update { it.copy(sleepEndMs = end) }
+        sleepJob = scope.launch {
+            delay((end - System.currentTimeMillis() - SLEEP_FADE_MS).coerceAtLeast(0))
+            val steps = 30
+            for (i in 1..steps) {
+                player.volume = 1f - i.toFloat() / steps
+                delay(SLEEP_FADE_MS / steps)
+            }
+            player.pause()
+            player.volume = 1f
+            _state.update { it.copy(sleepEndMs = 0, message = "Minuteur terminé, bonne nuit !") }
+        }
+    }
+
+    /** Réveil : lance la station avec un son qui monte doucement pendant une minute. */
+    fun playForAlarm(station: Station) {
+        fadeInJob?.cancel()
+        player.volume = 0.1f
+        play(station)
+        fadeInJob = scope.launch {
+            val steps = 30
+            for (i in 1..steps) {
+                delay(2_000)
+                player.volume = (0.1f + 0.9f * i / steps).coerceAtMost(1f)
+            }
+        }
     }
 
     fun consumeMessage() = _state.update { it.copy(message = null) }
@@ -448,6 +514,7 @@ class PlaybackEngine(
 
     companion object {
         const val TICK_MS = 500L
+        const val SLEEP_FADE_MS = 30_000L
         /** Tampon de pause en mémoire : environ 25 min à 128 kbit/s. */
         const val PAUSE_BUFFER_BYTES = 24 * 1024 * 1024
         /** Ce qu'on garde derrière la position d'écoute quand l'option est désactivée. */

@@ -21,7 +21,17 @@ data class Station(
     val votes: Int = 0,
     @SerialName("clickcount") val clickCount: Int = 0,
     @SerialName("clicktrend") val clickTrend: Int = 0,
+    @SerialName("geo_lat") val geoLat: Double? = null,
+    @SerialName("geo_long") val geoLong: Double? = null,
 ) {
+    /** Position utilisable sur le globe (certaines fiches ont 0,0 ou des valeurs fantaisistes). */
+    val hasGeo: Boolean
+        get() {
+            val lat = geoLat ?: return false
+            val lon = geoLong ?: return false
+            return lat in -90.0..90.0 && lon in -180.0..180.0 && !(lat == 0.0 && lon == 0.0)
+        }
+
     val streamUrl: String get() = urlResolved.ifBlank { url }
 
     val tagList: List<String>

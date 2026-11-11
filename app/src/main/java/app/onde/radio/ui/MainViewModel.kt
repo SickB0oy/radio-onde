@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.onde.radio.OndeApp
+import app.onde.radio.alarm.AlarmScheduler
+import app.onde.radio.data.AlarmSettings
 import app.onde.radio.data.Genres
 import app.onde.radio.data.Recommender
 import app.onde.radio.data.Station
@@ -43,6 +45,12 @@ data class HomeState(
     val otherTagsLoading: Boolean = false,
     val otherTagsError: String? = null,
     val openedTag: String? = null,
+)
+
+data class GlobeState(
+    val loading: Boolean = false,
+    val stations: List<Station> = emptyList(),
+    val error: String? = null,
 )
 
 data class SearchState(
@@ -181,4 +189,47 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun play(station: Station) = engine.play(station)
+
+    // ---------------------------------------------------------------- Réveil
+
+    fun updateAlarm(transform: (AlarmSettings) -> AlarmSettings) {
+        library.updateAlarm(transform)
+        AlarmScheduler.schedule(getApplication(), library.data.value.alarm)
+    }
+
+    // ---------------------------------------------------------------- Zapping
+
+    /** Les stations de l'onglet affiché, mélangées, pour le Zapping. */
+    fun zapStations(): List<Station> {
+        val h = _home.value
+        val list = when (h.selectedGenre) {
+            Genres.FOR_YOU -> h.reco.map { it.station } + h.trends
+            Genres.OTHERS -> h.openedTag?.let { h.genres["tag:$it"]?.stations }.orEmpty()
+            else -> h.genres[h.selectedGenre]?.stations.orEmpty()
+        }
+        return list.distinctBy { it.uuid }.shuffled()
+    }
+
+    fun zapTitle(): String = when (val key = _home.value.selectedGenre) {
+        Genres.FOR_YOU -> "Pour toi"
+        Genres.OTHERS -> _home.value.openedTag?.replaceFirstChar(Char::uppercase) ?: "Autres genres"
+        else -> Genres.find(key)?.label ?: "Zapping"
+    }
+
+    // ---------------------------------------------------------------- Globe
+
+    private val _globe = MutableStateFlow(GlobeState())
+    val globe: StateFlow<GlobeState> = _globe.asStateFlow()
+
+    fun loadGlobe(force: Boolean = false) {
+        val g = _globe.value
+        if (!force && (g.loading || g.stations.isNotEmpty())) return
+        _globe.value = GlobeState(loading = true)
+        viewModelScope.launch {
+            _globe.value = runCatching { onde.api.geoStations() }.fold(
+                onSuccess = { GlobeState(stations = it) },
+                onFailure = { GlobeState(error = "Impossible de charger les radios du monde. Vérifie ta connexion.") },
+            )
+        }
+    }
 }
