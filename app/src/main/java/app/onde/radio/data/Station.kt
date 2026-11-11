@@ -46,13 +46,13 @@ data class Station(
     val subtitle: String
         get() {
             val genres = tagList.take(2).joinToString(" · ") { it.replaceFirstChar(Char::uppercase) }
-            val place = state.ifBlank { country }
+            val place = PlaceNames.fr(state).ifBlank { countryNameFr }
             return listOf(genres, place).filter { it.isNotBlank() }.joinToString(" · ")
         }
 
     /** « Ville ou région, Pays » quand l'annuaire les connaît. */
     val placeLabel: String
-        get() = listOf(state.trim(), countryNameFr).filter { it.isNotBlank() }.distinct().joinToString(", ")
+        get() = listOf(PlaceNames.fr(state), countryNameFr).filter { it.isNotBlank() }.distinct().joinToString(", ")
 
     /** Nom du pays en français à partir de son code (« Maroc » plutôt que « Morocco »). */
     val countryNameFr: String
