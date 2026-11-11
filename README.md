@@ -1,5 +1,7 @@
 # Radio Onde – radio libre pour Android
 
+Créée par [SickB0oy](https://github.com/SickB0oy).
+
 Appli radio gratuite, sans pub ni pistage, qui va plus loin que les autres :
 
 - **Pause du direct** : en pause, la suite est mise de côté en mémoire pour reprendre là où tu t'étais arrêté,

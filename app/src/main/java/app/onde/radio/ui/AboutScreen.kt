@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.sp
 import app.onde.radio.R
 import app.onde.radio.ui.theme.Onde
 
+private const val AUTHOR = "SickB0oy"
+private const val AUTHOR_URL = "https://github.com/SickB0oy"
 private const val REPO_URL = "https://github.com/SickB0oy/radio-onde"
 
 @Composable
@@ -69,6 +71,16 @@ fun AboutScreen(onClose: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("Radio Onde", fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 if (version.isNotBlank()) Text("Version $version", fontSize = 14.sp, color = Onde.Muted)
+                Text(
+                    "Créée par $AUTHOR",
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(role = Role.Button) { context.openUrl(AUTHOR_URL) }
+                        .padding(vertical = 4.dp),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Onde.Accent,
+                )
             }
         }
 
