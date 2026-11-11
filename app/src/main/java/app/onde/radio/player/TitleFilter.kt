@@ -27,6 +27,16 @@ object TitleFilter {
     )
 
     fun parse(raw: String, stationName: String): Pair<String, String>? {
+        // Certaines stations envoient du XML ou du JSON au lieu de « Artiste - Titre » :
+        // on va chercher l'artiste et le titre dedans, sinon on n'affiche rien.
+        if (looksStructured(raw)) {
+            val (artist, title) = extractStructured(raw) ?: return null
+            return parsePlain(if (artist.isBlank()) title else "$artist - $title", stationName)
+        }
+        return parsePlain(raw, stationName)
+    }
+
+    private fun parsePlain(raw: String, stationName: String): Pair<String, String>? {
         var text = raw.trim().trim('"', '\'', ' ', '-', '|', '*', '~').trim()
         PREFIXES.firstOrNull { text.startsWith(it, ignoreCase = true) }?.let {
             text = text.substring(it.length).trim()
@@ -49,6 +59,41 @@ object TitleFilter {
         if (normArtist in JUNK && artist.isNotBlank()) return "" to title
         return artist to title
     }
+
+    private fun looksStructured(raw: String): Boolean {
+        val t = raw.trim()
+        return t.startsWith("<") || t.contains("<?xml", ignoreCase = true) ||
+            (t.startsWith("{") && t.contains("\":")) || Regex("</?[A-Za-z][^>]*>").containsMatchIn(t)
+    }
+
+    private val ARTIST_KEYS = "artist|artista|artiste|performer|interpret|interprete|singer|author|creator"
+    private val TITLE_KEYS = "title|titre|titulo|título|song|songtitle|track|trackname|songname|chanson"
+
+    /** Premier artiste et premier titre trouvés dans des balises XML ou des champs JSON. */
+    private fun extractStructured(raw: String): Pair<String, String>? {
+        fun xml(keys: String) = Regex(
+            "<(?:$keys)(?:\\s[^>]*)?>\\s*(?:<!\\[CDATA\\[)?(.*?)(?:]]>)?\\s*</(?:$keys)>",
+            setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+        )
+            .find(raw)?.groupValues?.get(1)
+        fun xmlAttr(keys: String) = Regex("\\s(?:$keys)\\s*=\\s*\"([^\"]*)\"", RegexOption.IGNORE_CASE)
+            .find(raw)?.groupValues?.get(1)
+        fun json(keys: String) = Regex("\"(?:$keys)\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"", RegexOption.IGNORE_CASE)
+            .find(raw)?.groupValues?.get(1)?.replace("\\\"", "\"")
+
+        val title = (xml(TITLE_KEYS) ?: json(TITLE_KEYS) ?: xmlAttr(TITLE_KEYS))?.let(::clean)
+        val artist = (xml(ARTIST_KEYS) ?: json(ARTIST_KEYS) ?: xmlAttr(ARTIST_KEYS))?.let(::clean).orEmpty()
+        if (title.isNullOrBlank() || looksStructured(title)) return null
+        return artist to title
+    }
+
+    /** Retire les balises restantes et décode les entités XML courantes. */
+    private fun clean(s: String): String =
+        s.replace(Regex("<[^>]*>"), " ")
+            .replace("&amp;", "&").replace("&apos;", "'").replace("&#39;", "'").replace("&quot;", "\"")
+            .replace("&lt;", "<").replace("&gt;", ">")
+            .replace(Regex("\\s+"), " ")
+            .trim()
 
     private fun normalize(s: String): String =
         Normalizer.normalize(s.lowercase(Locale.ROOT), Normalizer.Form.NFD)
