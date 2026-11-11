@@ -2,6 +2,7 @@ package app.onde.radio.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -45,6 +46,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -364,6 +366,11 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(20.dp))
                     .background(Onde.Surface2)
+                    // La fiche garde le toucher pour elle (sinon il passait au globe, qui la fermait) :
+                    // toucher la fiche lance la station si elle n'est pas déjà en écoute.
+                    .clickable(role = Role.Button, onClickLabel = "Écouter ${station.displayName}") {
+                        if (!isCurrent) vm.play(station)
+                    }
                     .padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
