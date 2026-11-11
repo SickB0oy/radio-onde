@@ -26,23 +26,34 @@ jobs:
         id: version
         run: echo "name=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)" >> "$GITHUB_OUTPUT"
 
-      - name: Préparer la clé de signature
-        if: github.event_name != 'pull_request'
+      # Le copier-coller depuis un téléphone ajoute parfois des espaces ou caractères invisibles :
+      # on ne garde que les caractères attendus avant de vérifier la clé.
+      - name: Préparer la clé et compiler
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-        run: |
-          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
-            echo "::error::Il manque les secrets KEYSTORE_BASE64 et/ou KEYSTORE_PASSWORD (Settings > Secrets and variables > Actions)."
-            exit 1
-          fi
-          echo "$KEYSTORE_BASE64" | base64 --decode > app/release.keystore
-
-      - name: Compiler
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEYSTORE_PASSWORD_RAW: ${{ secrets.KEYSTORE_PASSWORD }}
+          IS_PR: ${{ github.event_name == 'pull_request' }}
         run: |
           chmod +x gradlew
+          if [ "$IS_PR" != "true" ]; then
+            if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD_RAW" ]; then
+              echo "::error::Il manque les secrets KEYSTORE_BASE64 et/ou KEYSTORE_PASSWORD."
+              exit 1
+            fi
+            KEYSTORE_PASSWORD="$(printf '%s' "$KEYSTORE_PASSWORD_RAW" | tr -cd 'A-Za-z0-9')"
+            export KEYSTORE_PASSWORD
+            echo "Mot de passe : ${#KEYSTORE_PASSWORD} caractères utiles (32 attendus)."
+            if [ "${#KEYSTORE_PASSWORD}" -ne 32 ]; then
+              echo "::error::Le secret KEYSTORE_PASSWORD doit contenir les 32 caractères de KEYSTORE_PASSWORD.txt."
+              exit 1
+            fi
+            printf '%s' "$KEYSTORE_BASE64" | tr -cd 'A-Za-z0-9+/=' | base64 --decode > app/release.keystore
+            if ! keytool -list -keystore app/release.keystore -storepass "$KEYSTORE_PASSWORD" -alias radioonde > /dev/null 2>&1; then
+              echo "::error::La clé ne s'ouvre pas : vérifie que KEYSTORE_BASE64 contient tout KEYSTORE_BASE64.txt et que le mot de passe correspond."
+              exit 1
+            fi
+            echo "Clé de signature OK."
+          fi
           ./gradlew assembleRelease --stacktrace
 
       - name: Renommer l'APK
