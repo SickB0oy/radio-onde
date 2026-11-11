@@ -32,12 +32,5 @@ fun FavoritesScreen(library: LibraryData, onPlay: (Station) -> Unit) {
             StationRow(station, onClick = { onPlay(station) })
         }
 
-        val recent = library.recent.filterNot { r -> library.favorites.any { it.uuid == r.uuid } }
-        if (recent.isNotEmpty()) {
-            item { SectionTitle("Écoutées récemment", Modifier.padding(top = 20.dp, bottom = 4.dp)) }
-            items(recent, key = { "recent-" + it.uuid }) { station ->
-                StationRow(station, onClick = { onPlay(station) })
-            }
-        }
     }
 }
