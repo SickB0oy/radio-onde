@@ -17,6 +17,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -52,7 +54,7 @@ fun countryName(code: String): String =
     else Locale("", code).getDisplayCountry(Locale.FRENCH).ifBlank { code }
 
 @Composable
-fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit) {
+fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit, onAbout: () -> Unit) {
     val home by vm.home.collectAsStateWithLifecycle()
     var showCountries by remember { mutableStateOf(false) }
     val tabs = remember {
@@ -81,6 +83,7 @@ fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit) {
                     Text(greeting, fontSize = 13.sp, color = Onde.Muted)
                     Text("Radio Onde", fontSize = 30.sp, fontWeight = FontWeight.Bold)
                 }
+                CircleIconButton(Icons.Rounded.Info, "À propos de Radio Onde", onAbout)
             }
         }
 

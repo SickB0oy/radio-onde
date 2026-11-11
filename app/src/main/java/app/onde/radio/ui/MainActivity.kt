@@ -87,6 +87,7 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
     val library by vm.libraryData.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var aboutOpen by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
 
     LaunchedEffect(player.message) {
@@ -106,8 +107,12 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
         }
     }
 
-    BackHandler(enabled = searchOpen || tab != Tab.Home) {
-        if (searchOpen) searchOpen = false else tab = Tab.Home
+    BackHandler(enabled = aboutOpen || searchOpen || tab != Tab.Home) {
+        when {
+            aboutOpen -> aboutOpen = false
+            searchOpen -> searchOpen = false
+            else -> tab = Tab.Home
+        }
     }
 
     Scaffold(
@@ -125,16 +130,21 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
                 BottomNav(
                     selected = tab,
                     searchOpen = searchOpen,
-                    onSearch = { searchOpen = true },
+                    onSearch = {
+                        searchOpen = true
+                        aboutOpen = false
+                    },
                 ) {
                     tab = it
                     searchOpen = false
+                    aboutOpen = false
                 }
             }
         },
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when {
+                aboutOpen -> AboutScreen(onClose = { aboutOpen = false })
                 searchOpen -> SearchScreen(
                     vm = vm,
                     onPlay = {
@@ -144,7 +154,7 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
                     },
                     onClose = { searchOpen = false },
                 )
-                tab == Tab.Home -> HomeScreen(vm = vm, onPlay = vm::play)
+                tab == Tab.Home -> HomeScreen(vm = vm, onPlay = vm::play, onAbout = { aboutOpen = true })
                 tab == Tab.Player -> PlayerScreen(
                     state = player,
                     isFavorite = player.station?.let { s -> library.favorites.any { it.uuid == s.uuid } } == true,
