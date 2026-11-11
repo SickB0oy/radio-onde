@@ -66,7 +66,7 @@ import kotlin.math.sin
 private const val DEG = (PI / 180).toFloat()
 
 /** Un point sur la sphère (trigonométrie précalculée) : une station, ou un point de la grille. */
-private class GeoPoint(val station: Station?, latDeg: Float, lonDeg: Float) {
+private class GeoPoint(val station: Station?, val latDeg: Float, val lonDeg: Float) {
     val sinLat = sin(latDeg * DEG)
     val cosLat = cos(latDeg * DEG)
     val lon = lonDeg * DEG
@@ -90,10 +90,27 @@ private fun loadLand(context: Context): List<List<GeoPoint>> = runCatching {
     }
 }.getOrDefault(emptyList())
 
-/** Méridiens et parallèles, calculés une seule fois. */
-private val GRID: List<GeoPoint> = buildList {
-    for (lat in -60..60 step 30) for (lon in -180 until 180 step 3) add(GeoPoint(null, lat.toFloat(), lon.toFloat()))
-    for (lon in -180 until 180 step 30) for (lat in -84..84 step 3) add(GeoPoint(null, lat.toFloat(), lon.toFloat()))
+/**
+ * Rectangle englobant de chaque pays (Natural Earth, domaine public), généré à la compilation
+ * par tools/make_countries.py. Sert à écarter les stations dont la position déclarée dans
+ * l'annuaire ne correspond pas à leur pays (coordonnées inversées, fantaisistes…).
+ */
+private fun loadCountryBoxes(context: Context): Map<String, FloatArray> = runCatching {
+    context.assets.open("countries.txt").bufferedReader().readLines().mapNotNull { line ->
+        val parts = line.trim().split(' ')
+        if (parts.size != 5) return@mapNotNull null
+        val nums = parts.drop(1).map { it.toFloatOrNull() ?: return@mapNotNull null }
+        parts[0] to nums.toFloatArray()
+    }.toMap()
+}.getOrDefault(emptyMap())
+
+/** Garde une station si son pays est inconnu, ou si elle tombe dans son pays (avec une marge). */
+private fun plausible(p: GeoPoint, boxes: Map<String, FloatArray>): Boolean {
+    val box = boxes[p.station?.countryCode?.uppercase() ?: return true] ?: return true
+    val margin = 1.5f
+    val lonOk = box[2] <= -179f && box[3] >= 179f ||
+        p.lonDeg in (box[2] - margin)..(box[3] + margin)
+    return p.latDeg in (box[0] - margin)..(box[1] + margin) && lonOk
 }
 
 /**
@@ -108,10 +125,19 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
     val library by vm.libraryData.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.loadGlobe() }
 
-    val points = remember(globe.stations) { globe.stations.map(::GeoPoint) }
     val context = LocalContext.current
     var land by remember { mutableStateOf<List<List<GeoPoint>>>(emptyList()) }
-    LaunchedEffect(Unit) { land = withContext(Dispatchers.IO) { loadLand(context) } }
+    var boxes by remember { mutableStateOf<Map<String, FloatArray>>(emptyMap()) }
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            land = loadLand(context)
+            boxes = loadCountryBoxes(context)
+        }
+    }
+    // Stations triées de la plus écoutée à la moins écoutée (ordre de l'annuaire), hors positions douteuses.
+    val points = remember(globe.stations, boxes) {
+        globe.stations.map(::GeoPoint).filter { plausible(it, boxes) }
+    }
     var centerLon by remember { mutableFloatStateOf(2f) }   // départ : l'Europe
     var centerLat by remember { mutableFloatStateOf(30f) }
     var zoom by remember { mutableFloatStateOf(1f) }
@@ -119,7 +145,9 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
     var selected by remember { mutableStateOf<Station?>(null) }
     var canvasSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
     val tapRadiusPx = with(LocalDensity.current) { 28.dp.toPx() }
-    val dotPx = with(LocalDensity.current) { 2.6.dp.toPx() }
+    val dotPx = with(LocalDensity.current) { 2.2.dp.toPx() }
+    val bigDotPx = with(LocalDensity.current) { 3.6.dp.toPx() }
+    val cellPx = with(LocalDensity.current) { 5.dp.toPx() }
 
     // Rotation lente quand on ne touche à rien.
     LaunchedEffect(Unit) {
@@ -198,11 +226,6 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
             )
             drawCircle(Onde.Accent.copy(alpha = 0.35f), radius = r, center = c, style = Stroke(width = 1.dp.toPx()))
 
-            // Méridiens et parallèles, en pointillés discrets
-            val grid = ArrayList<Offset>(GRID.size)
-            for (g in GRID) project(g)?.let(grid::add)
-            drawPoints(grid, PointMode.Points, Color.White.copy(alpha = 0.10f), strokeWidth = 1.5.dp.toPx(), cap = StrokeCap.Round)
-
             // Les continents : on trace chaque contour, en coupant là où il passe derrière le globe.
             if (land.isNotEmpty()) {
                 val coast = Path()
@@ -223,10 +246,35 @@ fun GlobeScreen(vm: MainViewModel, onClose: () -> Unit) {
                 drawPath(coast, Onde.Accent.copy(alpha = 0.55f), style = Stroke(width = 1.2.dp.toPx(), join = StrokeJoin.Round))
             }
 
-            // Les stations
-            val dots = ArrayList<Offset>(points.size)
-            for (p in points) project(p)?.let(dots::add)
-            drawPoints(dots, PointMode.Points, Color.White.copy(alpha = 0.7f), strokeWidth = dotPx, cap = StrokeCap.Round)
+            // Les stations : un seul point par petite zone de l'écran (plus lisible), les plus
+            // écoutées en plus gros, et celles proches du bord du globe plus discrètes.
+            val r0 = radius()
+            val lat0 = centerLat * DEG
+            val sinLat0 = sin(lat0)
+            val cosLat0 = cos(lat0)
+            val taken = HashSet<Long>(points.size)
+            val popular = ArrayList<Offset>()
+            val near = ArrayList<Offset>(points.size)
+            val far = ArrayList<Offset>(points.size)
+            points.forEachIndexed { index, p ->
+                val dLon = p.lon - centerLon * DEG
+                val cosD = cos(dLon)
+                val z = sinLat0 * p.sinLat + cosLat0 * p.cosLat * cosD
+                if (z <= 0f) return@forEachIndexed
+                val x = c.x + r0 * p.cosLat * sin(dLon)
+                val y = c.y - r0 * (cosLat0 * p.sinLat - sinLat0 * p.cosLat * cosD)
+                val cell = ((x / cellPx).toLong() shl 32) or ((y / cellPx).toLong() and 0xffffffffL)
+                if (!taken.add(cell)) return@forEachIndexed
+                val o = Offset(x, y)
+                when {
+                    index < 150 -> popular += o
+                    z > 0.35f -> near += o
+                    else -> far += o
+                }
+            }
+            drawPoints(far, PointMode.Points, Color.White.copy(alpha = 0.30f), strokeWidth = dotPx, cap = StrokeCap.Round)
+            drawPoints(near, PointMode.Points, Color.White.copy(alpha = 0.75f), strokeWidth = dotPx, cap = StrokeCap.Round)
+            drawPoints(popular, PointMode.Points, Color.White, strokeWidth = bigDotPx, cap = StrokeCap.Round)
 
             // Station en écoute et station touchée
             val playingUuid = player.station?.uuid
