@@ -16,6 +16,8 @@ data class TrackMark(
     val absPos: Long,
     val timeMs: Long,
     var historyId: Long = 0L,
+    /** false pour une pub, un slogan, le nom de la station… : rien à afficher ni à garder. */
+    val isTrack: Boolean = true,
 )
 
 /**
@@ -29,6 +31,8 @@ class StreamRecorder(
     url: String,
     val buffer: RingBuffer,
     private val bitrateHintKbps: Int,
+    /** Transforme le texte reçu en (artiste, titre), ou null si ce n'est pas un morceau. */
+    private val parseTitle: (String) -> Pair<String, String>?,
     private val onTrack: (TrackMark) -> Unit,
 ) {
     val marks = CopyOnWriteArrayList<TrackMark>()
@@ -176,13 +180,14 @@ class StreamRecorder(
         val text = decode(meta)
         val streamTitle = parseStreamTitle(text) ?: return
         if (streamTitle.isBlank() || streamTitle == marks.lastOrNull()?.raw) return
-        val (artist, title) = splitTitle(streamTitle)
+        val parsed = parseTitle(streamTitle)
         val mark = TrackMark(
             raw = streamTitle,
-            artist = artist,
-            title = title,
+            artist = parsed?.first.orEmpty(),
+            title = parsed?.second.orEmpty(),
             absPos = buffer.written,
             timeMs = System.currentTimeMillis(),
+            isTrack = parsed != null,
         )
         marks.add(mark)
         onTrack(mark)
