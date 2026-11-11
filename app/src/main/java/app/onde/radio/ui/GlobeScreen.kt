@@ -169,7 +169,7 @@ private fun plausible(p: GeoPoint, boxes: Map<String, FloatArray>): Boolean {
  * Pas de carte à télécharger : ce sont les milliers de stations qui dessinent les continents.
  */
 @Composable
-fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?) {
+fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> Unit = {}) {
     val globe by vm.globe.collectAsStateWithLifecycle()
     val player by vm.player.collectAsStateWithLifecycle()
     val library by vm.libraryData.collectAsStateWithLifecycle()
@@ -408,7 +408,8 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?) {
         }
 
         // Fiche de la station touchée
-        selected?.let { station ->
+        // Une seule fiche : la station touchée, sinon celle en écoute (le mini-lecteur est masqué ici).
+        (selected ?: player.station)?.let { station ->
             val isCurrent = player.station?.uuid == station.uuid
             val isFavorite = library.favorites.any { it.uuid == station.uuid }
             Row(
@@ -420,8 +421,8 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?) {
                     .background(Onde.Surface2)
                     // La fiche garde le toucher pour elle (sinon il passait au globe, qui la fermait) :
                     // toucher la fiche lance la station si elle n'est pas déjà en écoute.
-                    .clickable(role = Role.Button, onClickLabel = "Écouter ${station.displayName}") {
-                        if (!isCurrent) vm.play(station)
+                    .clickable(role = Role.Button, onClickLabel = if (isCurrent) "Ouvrir le lecteur" else "Écouter ${station.displayName}") {
+                        if (isCurrent) onOpenPlayer() else vm.play(station)
                     }
                     .padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically,

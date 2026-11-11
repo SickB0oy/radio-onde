@@ -52,7 +52,14 @@ data class Station(
 
     /** « Ville ou région, Pays » quand l'annuaire les connaît. */
     val placeLabel: String
-        get() = listOf(state.trim(), country.trim()).filter { it.isNotBlank() }.distinct().joinToString(", ")
+        get() = listOf(state.trim(), countryNameFr).filter { it.isNotBlank() }.distinct().joinToString(", ")
+
+    /** Nom du pays en français à partir de son code (« Maroc » plutôt que « Morocco »). */
+    val countryNameFr: String
+        get() = countryCode.takeIf { it.length == 2 }
+            ?.let { java.util.Locale("", it).getDisplayCountry(java.util.Locale.FRENCH) }
+            ?.takeIf { it.isNotBlank() && it != countryCode }
+            ?: country.trim()
 
     val qualityLabel: String
         get() = listOf(codec.uppercase(), if (bitrate > 0) "$bitrate kbit/s" else "")

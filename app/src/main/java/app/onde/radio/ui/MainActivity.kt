@@ -126,7 +126,9 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             Column(Modifier.background(Onde.Ink).navigationBarsPadding()) {
-                if (player.station != null && !playerOpen && !searchOpen && !zappingOpen) {
+                // Sur le globe, la fiche de la station fait déjà office de mini-lecteur.
+                val globeShown = tab == Tab.Globe && !overlayOpen
+                if (player.station != null && !playerOpen && !searchOpen && !zappingOpen && !globeShown) {
                     MiniPlayer(
                         state = player,
                         onOpen = {
@@ -180,7 +182,7 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
                     onSettings = { aboutOpen = true },
                     onZapping = { zappingOpen = true },
                 )
-                tab == Tab.Globe -> GlobeScreen(vm = vm, onClose = null)
+                tab == Tab.Globe -> GlobeScreen(vm = vm, onClose = null, onOpenPlayer = { playerOpen = true })
                 tab == Tab.History -> HistoryScreen(
                     library = library,
                     onToggleSaved = vm.library::toggleSaved,
