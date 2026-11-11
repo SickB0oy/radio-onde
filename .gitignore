@@ -6,3 +6,7 @@ local.properties
 .DS_Store
 captures/
 .kotlin/
+
+# Clé de signature : uniquement dans les secrets GitHub
+*.keystore
+*.jks

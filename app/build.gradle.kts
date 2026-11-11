@@ -13,8 +13,25 @@ android {
         applicationId = "app.onde.radio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.5.1"
+        versionCode = 10
+        versionName = "0.5.2"
+    }
+
+    // Clé de signature fixe, fournie par les secrets GitHub KEYSTORE_BASE64 et KEYSTORE_PASSWORD
+    // (la compilation la décode dans app/release.keystore, jamais envoyé dans le dépôt).
+    // Sans elle, chaque compilation aurait une signature différente et Android refuserait
+    // d'installer la mise à jour (« package en conflit »).
+    val keystoreFile = file("release.keystore")
+    val keystorePassword: String? = System.getenv("KEYSTORE_PASSWORD")
+    signingConfigs {
+        if (keystoreFile.exists() && !keystorePassword.isNullOrEmpty()) {
+            create("release") {
+                storeFile = keystoreFile
+                storePassword = keystorePassword
+                keyAlias = "radioonde"
+                keyPassword = keystorePassword
+            }
+        }
     }
 
     buildTypes {
@@ -25,9 +42,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Signe la release avec la clé de debug pour pouvoir l'installer directement.
-            // Remplace par ta propre clé avant toute publication.
-            signingConfig = signingConfigs.getByName("debug")
+            // Sans clé (compilation sur un ordinateur), on signe avec la clé de debug.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
 
