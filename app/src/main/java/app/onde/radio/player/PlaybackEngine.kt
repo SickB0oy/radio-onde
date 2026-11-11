@@ -102,6 +102,7 @@ class PlaybackEngine(
     /** Option « Retour en arrière » active pour la station en cours (tampon de 30 min sur disque). */
     private var rewindMode = false
     private val directMarks = mutableListOf<TrackMark>()
+    private val directCandidates = ArrayDeque<Pair<String, Boolean>>()
     private var lastNotifiedMark: TrackMark? = null
     private var recordStartAbs = -1L
     private var listenedMs = 0L
@@ -140,7 +141,15 @@ class PlaybackEngine(
             override fun onEvents(player: Player, events: Player.Events) = refresh()
 
             override fun onPlayerError(error: PlaybackException) {
-                _state.update { it.copy(message = "Lecture impossible (${error.errorCodeName})") }
+                val station = _state.value.station ?: return
+                // Si la lecture via le tampon échoue, on essaie de lire le flux directement,
+                // puis l'adresse d'origine de la station, avant d'abandonner.
+                if (!direct) releaseRecorder()
+                if (!startNextDirect(station)) {
+                    _state.update {
+                        it.copy(isBuffering = false, message = "Cette station ne répond pas (${error.errorCodeName})")
+                    }
+                }
             }
 
             override fun onMetadata(metadata: Metadata) {
@@ -178,8 +187,15 @@ class PlaybackEngine(
             library.onStationPlayed(station)
             scope.launch { api.countClick(station.uuid) }
 
+            // Adresses de secours pour une lecture directe, dans l'ordre.
+            directCandidates.clear()
+            directCandidates += station.streamUrl to station.isHls
+            if (station.url.isNotBlank() && station.url != station.streamUrl) {
+                directCandidates += station.url to StreamOpener.isHlsUrl(station.url)
+            }
+
             if (station.isHls) {
-                startDirect(station)
+                startNextDirect(station)
                 return@launch
             }
 
@@ -197,12 +213,16 @@ class PlaybackEngine(
             recorder = rec
             rec.start()
 
-            val ok = withTimeoutOrNull(12_000) { runCatching { rec.awaitReady() }.isSuccess } == true
+            val result = withTimeoutOrNull(15_000) { runCatching { rec.awaitReady() } }
             if (mySession != session) return@launch
-            if (!ok) {
-                // Flux que l'on ne sait pas enregistrer : on le lit directement, sans retour en arrière.
+            if (result == null || result.isFailure) {
+                // Flux que l'on ne sait pas mettre en tampon : on le lit directement, sans pause du direct.
+                val error = result?.exceptionOrNull()
+                if (error is HlsStreamException) directCandidates.addFirst(error.url to true)
                 releaseRecorder()
-                startDirect(station)
+                if (!startNextDirect(station)) {
+                    _state.update { it.copy(isBuffering = false, message = "Cette station ne répond pas") }
+                }
                 return@launch
             }
             prepareAt(0L)
@@ -312,16 +332,19 @@ class PlaybackEngine(
         player.play()
     }
 
-    private fun startDirect(station: Station) {
+    /** Lance la prochaine adresse de secours ; renvoie false s'il n'y en a plus. */
+    private fun startNextDirect(station: Station): Boolean {
+        val (url, hls) = directCandidates.removeFirstOrNull() ?: return false
         direct = true
         val builder = MediaItem.Builder()
             .setMediaId(station.uuid)
-            .setUri(station.streamUrl)
+            .setUri(url)
             .setMediaMetadata(metadataFor(station, null))
-        if (station.isHls) builder.setMimeType(MimeTypes.APPLICATION_M3U8)
+        if (hls) builder.setMimeType(MimeTypes.APPLICATION_M3U8)
         player.setMediaItem(builder.build())
         player.prepare()
         player.play()
+        return true
     }
 
     private fun minReadable(rec: StreamRecorder): Long {

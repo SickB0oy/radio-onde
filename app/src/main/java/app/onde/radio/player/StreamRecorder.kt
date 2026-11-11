@@ -1,9 +1,7 @@
 package app.onde.radio.player
 
 import kotlinx.coroutines.CompletableDeferred
-import okhttp3.Call
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import java.io.EOFException
 import java.io.IOException
 import java.io.InputStream
@@ -29,7 +27,7 @@ data class TrackMark(
  */
 class StreamRecorder(
     private val client: OkHttpClient,
-    private val url: String,
+    url: String,
     val buffer: RingBuffer,
     private val bitrateHintKbps: Int,
     private val onTrack: (TrackMark) -> Unit,
@@ -44,7 +42,8 @@ class StreamRecorder(
 
     private val ready = CompletableDeferred<Unit>()
     @Volatile private var stopped = false
-    @Volatile private var call: Call? = null
+    private val opener = StreamOpener(client)
+    @Volatile private var currentUrl: String = url
     private var thread: Thread? = null
 
     // Estimation du débit, pour convertir octets <-> millisecondes.
@@ -76,7 +75,7 @@ class StreamRecorder(
 
     fun stop() {
         stopped = true
-        call?.cancel()
+        opener.cancel()
         thread?.interrupt()
         buffer.finish()
     }
@@ -92,6 +91,10 @@ class StreamRecorder(
             try {
                 connectAndPump()
                 failures = 0
+            } catch (e: HlsStreamException) {
+                // Pas enregistrable : le moteur lira cette adresse directement.
+                ready.completeExceptionally(e)
+                break
             } catch (e: IOException) {
                 if (stopped) break
                 failures++
@@ -111,25 +114,15 @@ class StreamRecorder(
     }
 
     private fun connectAndPump() {
-        val request = Request.Builder()
-            .url(url)
-            .header("Icy-MetaData", "1")
-            .header("User-Agent", USER_AGENT)
-            .build()
-        val c = client.newCall(request)
-        call = c
-        c.execute().use { response ->
-            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-            val type = response.header("Content-Type").orEmpty()
-            if (type.contains("text/html", true) || type.contains("mpegurl", true)) {
-                throw IOException("Ce n'est pas un flux audio ($type)")
-            }
-            contentType = type
-            headerBitrateKbps = response.header("icy-br")
+        opener.open(currentUrl).use { conn ->
+            // On retient l'adresse finale (après liste de lecture / redirection) pour les reconnexions.
+            currentUrl = conn.url
+            contentType = conn.header("content-type").orEmpty()
+            headerBitrateKbps = conn.header("icy-br")
                 ?.substringBefore(',')?.trim()?.toIntOrNull() ?: 0
-            val metaInt = response.header("icy-metaint")?.trim()?.toIntOrNull() ?: 0
+            val metaInt = conn.header("icy-metaint")?.trim()?.toIntOrNull() ?: 0
             ready.complete(Unit)
-            pump(response.body!!.byteStream(), metaInt)
+            pump(conn.body, metaInt)
         }
     }
 

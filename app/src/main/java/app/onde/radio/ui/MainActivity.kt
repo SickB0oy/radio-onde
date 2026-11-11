@@ -16,17 +16,21 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -118,7 +122,11 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
                         onToggle = vm.engine::togglePlay,
                     )
                 }
-                BottomNav(selected = tab) {
+                BottomNav(
+                    selected = tab,
+                    searchOpen = searchOpen,
+                    onSearch = { searchOpen = true },
+                ) {
                     tab = it
                     searchOpen = false
                 }
@@ -136,7 +144,7 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
                     },
                     onClose = { searchOpen = false },
                 )
-                tab == Tab.Home -> HomeScreen(vm = vm, onPlay = vm::play, onSearch = { searchOpen = true })
+                tab == Tab.Home -> HomeScreen(vm = vm, onPlay = vm::play)
                 tab == Tab.Player -> PlayerScreen(
                     state = player,
                     isFavorite = player.station?.let { s -> library.favorites.any { it.uuid == s.uuid } } == true,
@@ -200,39 +208,69 @@ private fun MiniPlayer(state: PlayerUiState, onOpen: () -> Unit, onToggle: () ->
 }
 
 @Composable
-private fun BottomNav(selected: Tab, onSelect: (Tab) -> Unit) {
+private fun BottomNav(
+    selected: Tab,
+    searchOpen: Boolean,
+    onSearch: () -> Unit,
+    onSelect: (Tab) -> Unit,
+) {
     Row(
         Modifier
             .fillMaxWidth()
             .drawBehind { drawLine(Color(0xFF1F242D), Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceAround,
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Tab.entries.forEach { t ->
-            val active = t == selected
-            Column(
+        val (left, right) = Tab.entries.partition { it == Tab.Home || it == Tab.Player }
+        left.forEach { NavItem(it, active = it == selected && !searchOpen, onSelect = onSelect) }
+
+        // Gros bouton de recherche, au centre et à portée de pouce.
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Box(
                 Modifier
-                    .widthIn(min = 72.dp)
-                    .height(52.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable(role = Role.Tab, onClick = { onSelect(t) }),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
+                    .size(60.dp)
+                    .clip(CircleShape)
+                    .background(if (searchOpen) Onde.Text else Onde.Amber)
+                    .clickable(role = Role.Button, onClickLabel = "Rechercher une station", onClick = onSearch),
+                contentAlignment = Alignment.Center,
             ) {
-                Box(
-                    Modifier
-                        .width(24.dp)
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(if (active) Onde.Amber else Color.Transparent)
-                )
-                Text(
-                    t.label,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = if (active) Onde.Amber else Onde.Muted,
+                Icon(
+                    Icons.Rounded.Search,
+                    contentDescription = "Rechercher une station",
+                    tint = Onde.Ink,
+                    modifier = Modifier.size(30.dp),
                 )
             }
         }
+
+        right.forEach { NavItem(it, active = it == selected && !searchOpen, onSelect = onSelect) }
+    }
+}
+
+@Composable
+private fun RowScope.NavItem(tab: Tab, active: Boolean, onSelect: (Tab) -> Unit) {
+    Column(
+        Modifier
+            .weight(1f)
+            .height(56.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(role = Role.Tab, onClick = { onSelect(tab) }),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
+    ) {
+        Box(
+            Modifier
+                .width(24.dp)
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(if (active) Onde.Amber else Color.Transparent)
+        )
+        Text(
+            tab.label,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            color = if (active) Onde.Amber else Onde.Muted,
+            maxLines = 1,
+        )
     }
 }

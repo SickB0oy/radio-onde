@@ -18,7 +18,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -53,7 +52,7 @@ fun countryName(code: String): String =
     Locale("", code).getDisplayCountry(Locale.FRENCH).ifBlank { code }
 
 @Composable
-fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit, onSearch: () -> Unit) {
+fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit) {
     val home by vm.home.collectAsStateWithLifecycle()
     val library by vm.libraryData.collectAsStateWithLifecycle()
     var showCountries by remember { mutableStateOf(false) }
@@ -75,10 +74,7 @@ fun HomeScreen(vm: MainViewModel, onPlay: (Station) -> Unit, onSearch: () -> Uni
                     Text(greeting, fontSize = 13.sp, color = Onde.Muted)
                     Text("Radio Onde", fontSize = 30.sp, fontWeight = FontWeight.Bold)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    CircleIconButton(Icons.Rounded.Settings, "Réglages", { showSettings = true })
-                    CircleIconButton(Icons.Rounded.Search, "Rechercher une station", onSearch)
-                }
+                CircleIconButton(Icons.Rounded.Settings, "Réglages", { showSettings = true })
             }
         }
 
