@@ -15,3 +15,5 @@ captures/
 app/src/main/assets/land.bin
 app/src/main/assets/countries.txt
 app/src/main/assets/land50.bin
+app/src/main/assets/borders.bin
+app/src/main/assets/borders50.bin

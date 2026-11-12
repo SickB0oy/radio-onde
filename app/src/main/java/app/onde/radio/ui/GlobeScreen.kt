@@ -178,11 +178,15 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
     val context = LocalContext.current
     var land by remember { mutableStateOf<List<LandRing>>(emptyList()) }
     var landDetailed by remember { mutableStateOf<List<LandRing>>(emptyList()) }
+    var borders by remember { mutableStateOf<List<LandRing>>(emptyList()) }
+    var bordersDetailed by remember { mutableStateOf<List<LandRing>>(emptyList()) }
     var boxes by remember { mutableStateOf<Map<String, FloatArray>>(emptyMap()) }
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             land = loadLand(context, "land.bin")
             landDetailed = loadLand(context, "land50.bin")
+            borders = loadLand(context, "borders.bin")
+            bordersDetailed = loadLand(context, "borders50.bin")
             boxes = loadCountryBoxes(context)
         }
     }
@@ -281,18 +285,17 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
             drawCircle(Onde.Accent.copy(alpha = 0.35f), radius = r, center = c, style = Stroke(width = 1.dp.toPx()))
 
             // Les continents : on trace chaque contour, en coupant là où il passe derrière le globe.
-            // Carte détaillée quand on zoome (si présente), et seulement les contours visibles.
-            val rings = if (zoom >= DETAIL_ZOOM && landDetailed.isNotEmpty()) landDetailed else land
-            if (rings.isNotEmpty()) {
-                val lat0r = centerLat * DEG
-                val lon0r = centerLon * DEG
-                val vx = cos(lat0r) * cos(lon0r)
-                val vy = cos(lat0r) * sin(lon0r)
-                val vz = sin(lat0r)
-                // Angle entre le centre de l'écran et son coin, vu depuis le centre de la Terre.
-                val halfDiag = hypot(size.width, size.height) / 2
-                val viewAngle = if (halfDiag >= radius()) (PI / 2).toFloat() else asin(halfDiag / radius())
-                val coast = Path()
+            // Tracés visibles seulement (on saute ceux hors de l'écran), coupés à l'horizon.
+            val lat0r = centerLat * DEG
+            val lon0r = centerLon * DEG
+            val vx = cos(lat0r) * cos(lon0r)
+            val vy = cos(lat0r) * sin(lon0r)
+            val vz = sin(lat0r)
+            // Angle entre le centre de l'écran et son coin, vu depuis le centre de la Terre.
+            val halfDiag = hypot(size.width, size.height) / 2
+            val viewAngle = if (halfDiag >= radius()) (PI / 2).toFloat() else asin(halfDiag / radius())
+            fun pathOf(rings: List<LandRing>): Path {
+                val path = Path()
                 for (ring in rings) {
                     val dot = (vx * ring.cx + vy * ring.cy + vz * ring.cz).coerceIn(-1f, 1f)
                     if (acos(dot) - ring.radius > viewAngle) continue
@@ -302,14 +305,35 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
                         if (o == null) {
                             penDown = false
                         } else if (penDown) {
-                            coast.lineTo(o.x, o.y)
+                            path.lineTo(o.x, o.y)
                         } else {
-                            coast.moveTo(o.x, o.y)
+                            path.moveTo(o.x, o.y)
                             penDown = true
                         }
                     }
                 }
-                drawPath(coast, Onde.Accent.copy(alpha = 0.55f), style = Stroke(width = 1.2.dp.toPx(), join = StrokeJoin.Round))
+                return path
+            }
+            val detailed = zoom >= DETAIL_ZOOM
+
+            // Frontières entre pays : fines et discrètes, sous les côtes.
+            val borderRings = if (detailed && bordersDetailed.isNotEmpty()) bordersDetailed else borders
+            if (borderRings.isNotEmpty()) {
+                drawPath(
+                    pathOf(borderRings),
+                    Onde.Accent.copy(alpha = 0.30f),
+                    style = Stroke(width = 0.8.dp.toPx(), join = StrokeJoin.Round),
+                )
+            }
+
+            // Côtes : carte détaillée quand on zoome (si présente).
+            val coastRings = if (detailed && landDetailed.isNotEmpty()) landDetailed else land
+            if (coastRings.isNotEmpty()) {
+                drawPath(
+                    pathOf(coastRings),
+                    Onde.Accent.copy(alpha = 0.55f),
+                    style = Stroke(width = 1.2.dp.toPx(), join = StrokeJoin.Round),
+                )
             }
 
             // Les stations : seulement les plus écoutées quand on est loin, de plus en plus quand on
