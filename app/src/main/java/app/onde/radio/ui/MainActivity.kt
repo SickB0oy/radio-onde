@@ -29,6 +29,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
@@ -48,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -73,11 +82,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Tab(val label: String) {
-    Home("Accueil"),
-    Globe("Globe"),
-    History("Historique"),
-    Favorites("Favoris"),
+enum class Tab(val label: String, val icon: ImageVector, val activeIcon: ImageVector) {
+    Home("Accueil", Icons.Outlined.Home, Icons.Rounded.Home),
+    Globe("Globe", Icons.Outlined.Public, Icons.Rounded.Public),
+    History("Historique", Icons.Outlined.History, Icons.Rounded.History),
+    Favorites("Favoris", Icons.Outlined.FavoriteBorder, Icons.Rounded.Favorite),
 }
 
 @Composable
@@ -280,19 +289,28 @@ private fun RowScope.NavItem(tab: Tab, active: Boolean, onSelect: (Tab) -> Unit)
     Column(
         Modifier
             .weight(1f)
-            .height(56.dp)
+            .height(64.dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable(role = Role.Tab, onClick = { onSelect(tab) }),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
+        verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
     ) {
+        // Icône dans une pastille verte quand l'onglet est actif.
         Box(
             Modifier
-                .width(24.dp)
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(if (active) Onde.Accent else Color.Transparent)
-        )
+                .width(56.dp)
+                .height(30.dp)
+                .clip(RoundedCornerShape(15.dp))
+                .background(if (active) Onde.Accent.copy(alpha = 0.18f) else Color.Transparent),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                if (active) tab.activeIcon else tab.icon,
+                contentDescription = null,
+                tint = if (active) Onde.Accent else Onde.Muted,
+                modifier = Modifier.size(24.dp),
+            )
+        }
         Text(
             tab.label,
             fontSize = 12.sp,
