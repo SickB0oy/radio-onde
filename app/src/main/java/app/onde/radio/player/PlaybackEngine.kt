@@ -52,8 +52,6 @@ data class PlayerUiState(
     val delayMs: Long = 0,
     /** Durée disponible dans le tampon, en millisecondes. */
     val bufferMs: Long = 0,
-    /** Avancer vers le direct (après une pause). */
-    val canSeekForward: Boolean = false,
     val current: TrackMark? = null,
     val previous: TrackMark? = null,
     val message: String? = null,
@@ -267,11 +265,6 @@ class PlaybackEngine(
         } else {
             player.play()
         }
-    }
-
-    /** Avance vers le direct (après une pause). */
-    fun skipForward(deltaMs: Long = 30_000) {
-        seekToDelay((_state.value.delayMs - deltaMs).coerceAtLeast(0))
     }
 
     fun goLive() {
@@ -504,8 +497,6 @@ class PlaybackEngine(
                     (station != null && player.mediaItemCount == 0 && it.isBuffering),
                 delayMs = delayMs,
                 bufferMs = bufferMs,
-                canSeekForward = rec != null && !direct && rec.isSeekable &&
-                    delayMs >= LIVE_THRESHOLD_MS,
                 current = current,
                 previous = previous,
             )

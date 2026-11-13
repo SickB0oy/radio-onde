@@ -97,6 +97,16 @@ class RadioBrowserApi(private val client: OkHttpClient) {
             mapOf("has_geo_info" to "true", "order" to "clickcount", "reverse" to "true", "limit" to "$limit"),
         ).filter { it.hasGeo }
 
+    /** Toutes les stations géolocalisées d'un pays (chargées quand on zoome dessus sur le globe). */
+    suspend fun geoStationsByCountry(countryCode: String, limit: Int = 3000): List<Station> =
+        stations(
+            "json/stations/search",
+            mapOf(
+                "countrycode" to countryCode, "has_geo_info" to "true",
+                "order" to "clickcount", "reverse" to "true", "limit" to "$limit",
+            ),
+        ).filter { it.hasGeo }
+
     /** Tous les genres de l'annuaire, des plus fournis aux moins fournis. */
     suspend fun topTags(limit: Int = 300): List<Tag> =
         json.decodeFromString<List<Tag>>(

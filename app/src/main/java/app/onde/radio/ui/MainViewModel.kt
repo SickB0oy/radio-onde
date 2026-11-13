@@ -51,6 +51,8 @@ data class GlobeState(
     val loading: Boolean = false,
     val stations: List<Station> = emptyList(),
     val error: String? = null,
+    /** Nombre de pays en cours de chargement (stations supplémentaires quand on zoome). */
+    val loadingMore: Int = 0,
 )
 
 data class SearchState(
@@ -224,12 +226,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun loadGlobe(force: Boolean = false) {
         val g = _globe.value
         if (!force && (g.loading || g.stations.isNotEmpty())) return
+        globeCountries.clear()
         _globe.value = GlobeState(loading = true)
         viewModelScope.launch {
             _globe.value = runCatching { onde.api.geoStations() }.fold(
                 onSuccess = { GlobeState(stations = it) },
                 onFailure = { GlobeState(error = "Impossible de charger les radios du monde. Vérifie ta connexion.") },
             )
+        }
+    }
+
+    private val globeCountries = mutableSetOf<String>()
+
+    /**
+     * Quand on zoome sur un pays, on charge toutes ses stations géolocalisées (une seule fois par
+     * pays) et on les ajoute au globe, toujours classées de la plus écoutée à la moins écoutée.
+     */
+    fun loadGlobeCountry(code: String) {
+        val cc = code.uppercase()
+        if (_globe.value.stations.isEmpty() || !globeCountries.add(cc)) return
+        _globe.update { it.copy(loadingMore = it.loadingMore + 1) }
+        viewModelScope.launch {
+            val extra = runCatching { onde.api.geoStationsByCountry(cc) }.getOrNull()
+            if (extra == null) globeCountries.remove(cc) // on réessaiera au prochain passage
+            _globe.update { g ->
+                val knownIds = g.stations.mapTo(HashSet()) { it.uuid }
+                val knownNames = g.stations.mapTo(HashSet()) { it.countryCode.uppercase() + "|" + it.name.trim().lowercase() }
+                val fresh = extra.orEmpty().filter {
+                    it.uuid !in knownIds && (it.countryCode.uppercase() + "|" + it.name.trim().lowercase()) !in knownNames
+                }
+                g.copy(
+                    stations = if (fresh.isEmpty()) g.stations else (g.stations + fresh).sortedByDescending { it.clickCount },
+                    loadingMore = (g.loadingMore - 1).coerceAtLeast(0),
+                )
+            }
         }
     }
 }

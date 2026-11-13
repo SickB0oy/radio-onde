@@ -22,7 +22,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
-import androidx.compose.material.icons.rounded.Forward30
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -217,30 +216,36 @@ fun PlayerScreen(
                     )
                 }
             }
+            // Minuteur de veille, en face du cœur.
             CircleIconButton(
-                Icons.Rounded.Forward30, "Avancer de 30 secondes", { engine.skipForward() },
-                size = 56.dp, iconSize = 26.dp, enabled = state.canSeekForward,
+                icon = Icons.Rounded.Bedtime,
+                contentDescription = "Minuteur de veille",
+                onClick = { showSleepTimer = true },
+                size = 56.dp,
+                iconSize = 26.dp,
+                background = if (state.sleepEndMs > 0) Onde.Accent.copy(alpha = 0.18f) else Onde.Surface,
+                tint = if (state.sleepEndMs > 0) Onde.Accent else Onde.Text,
             )
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            WideButton(
-                label = "Revenir au direct",
-                modifier = Modifier.weight(1f),
-                enabled = !state.isLive,
-                onClick = engine::goLive,
-                dotColor = Onde.Red,
-            )
+        if (state.sleepEndMs > 0) {
             val sleepLeftMs = state.sleepEndMs - System.currentTimeMillis()
-            WideButton(
-                label = if (state.sleepEndMs > 0) "Arrêt dans ${(sleepLeftMs / 60_000 + 1).coerceAtLeast(1)} min" else "Minuteur",
-                modifier = Modifier.weight(1f),
-                enabled = true,
-                onClick = { showSleepTimer = true },
-                icon = Icons.Rounded.Bedtime,
-                highlighted = state.sleepEndMs > 0,
+            Text(
+                "Arrêt dans ${(sleepLeftMs / 60_000 + 1).coerceAtLeast(1)} min",
+                modifier = Modifier.fillMaxWidth(),
+                fontSize = 13.sp,
+                color = Onde.Accent,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
         }
+
+        WideButton(
+            label = "Revenir au direct",
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !state.isLive,
+            onClick = engine::goLive,
+            dotColor = Onde.Red,
+        )
 
         state.previous?.let { prev ->
             Row(

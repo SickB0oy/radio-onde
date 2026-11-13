@@ -1,5 +1,6 @@
 package app.onde.radio.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -19,7 +20,10 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -28,11 +32,15 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -56,18 +64,28 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.onde.radio.data.PlaceNames
 import app.onde.radio.data.Station
 import app.onde.radio.ui.theme.Onde
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.text.Normalizer
+import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.acos
 import kotlin.math.asin
 import kotlin.math.sqrt
 import kotlin.math.cos
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.roundToInt
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.sin
@@ -163,11 +181,80 @@ private fun plausible(p: GeoPoint, boxes: Map<String, FloatArray>): Boolean {
     return p.latDeg in (box[0] - margin)..(box[1] + margin) && lonOk
 }
 
+/** Un résultat de recherche sur le globe : un pays, une région/ville ou une station. */
+private class GlobeHit(
+    val label: String,
+    val detail: String,
+    val lat: Float,
+    val lon: Float,
+    val zoom: Float,
+    val station: Station? = null,
+)
+
+private fun normalizeText(s: String): String =
+    Normalizer.normalize(s.lowercase(Locale.ROOT), Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "").trim()
+
+/**
+ * Index des lieux, construit à partir des stations elles-mêmes (rien à télécharger) : chaque pays
+ * et chaque région/ville est placé au centre de ses stations, avec un zoom adapté à leur étendue.
+ */
+private class PlaceIndex(private val points: List<GeoPoint>) {
+    private class Place(val hit: GlobeHit, val key: String, val count: Int)
+
+    private val countries: List<Place>
+    private val regions: List<Place>
+    private val stationNames: List<String> = points.map { normalizeText(it.station?.displayName.orEmpty()) }
+
+    init {
+        fun place(name: String, detail: String, pts: List<GeoPoint>): Place {
+            val lats = pts.map { it.latDeg }.sorted()
+            val lons = pts.map { it.lonDeg }.sorted()
+            fun q(l: List<Float>, f: Float) = l[((l.size - 1) * f).toInt()]
+            val lat = q(lats, 0.5f)
+            val spread = maxOf(q(lats, 0.9f) - q(lats, 0.1f), (q(lons, 0.9f) - q(lons, 0.1f)) * cos(lat * DEG))
+            val zoom = (48f / maxOf(spread, 1.5f)).coerceIn(2.5f, 20f)
+            return Place(GlobeHit(name, detail, lat, q(lons, 0.5f), zoom), normalizeText(name), pts.size)
+        }
+        val withStation = points.filter { it.station != null }
+        countries = withStation.groupBy { it.station!!.countryCode.uppercase() }
+            .filterKeys { it.length == 2 }
+            .map { (_, pts) -> place(pts.first().station!!.countryNameFr, "Pays · ${pts.size} stations", pts) }
+            .filter { it.key.isNotBlank() }
+        regions = withStation.filter { it.station!!.state.isNotBlank() }
+            .groupBy { normalizeText(PlaceNames.fr(it.station!!.state)) + "|" + it.station!!.countryCode.uppercase() }
+            .map { (_, pts) ->
+                val st = pts.first().station!!
+                place(PlaceNames.fr(st.state), "${st.countryNameFr} · ${pts.size} stations", pts)
+            }
+            .filter { it.key.length >= 2 }
+    }
+
+    fun search(query: String): List<GlobeHit> {
+        val q = normalizeText(query)
+        if (q.length < 2) return emptyList()
+        fun best(list: List<Place>, max: Int) = list.filter { it.key.contains(q) }
+            .sortedWith(compareByDescending<Place> { it.key.startsWith(q) }.thenByDescending { it.count })
+            .take(max).map { it.hit }
+        val stations = ArrayList<GlobeHit>(4)
+        for (i in points.indices) {
+            if (stations.size >= 4) break
+            if (!stationNames[i].contains(q)) continue
+            val p = points[i]
+            val st = p.station ?: continue
+            // Zoom suffisant pour que le point de cette station soit affiché.
+            val zoom = maxOf(8f, sqrt((i + 1) / 150f) + 1f).coerceAtMost(MAX_ZOOM)
+            stations += GlobeHit(st.displayName, "Station · ${st.placeLabel}", p.latDeg, p.lonDeg, zoom, st)
+        }
+        return best(countries, 3) + best(regions, 4) + stations
+    }
+}
+
 /**
  * Le globe des radios : chaque point est une station. On fait tourner la Terre du doigt,
  * on zoome à deux doigts, et on touche un point pour l'écouter.
  * Pas de carte à télécharger : ce sont les milliers de stations qui dessinent les continents.
  */
+@OptIn(FlowPreview::class)
 @Composable
 fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> Unit = {}) {
     val globe by vm.globe.collectAsStateWithLifecycle()
@@ -207,12 +294,60 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
     val midDotPx = with(LocalDensity.current) { 3.6.dp.toPx() }
     val bigDotPx = with(LocalDensity.current) { 5.dp.toPx() }
 
+    // Recherche d'un pays, d'une région, d'une ville ou d'une station.
+    var searchOpen by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    val placeIndex = remember(points, searchOpen) { if (searchOpen) PlaceIndex(points) else null }
+    val hits = remember(placeIndex, query) { placeIndex?.search(query).orEmpty() }
+    BackHandler(enabled = searchOpen) { searchOpen = false }
+
+    // Déplacement animé vers un lieu (par le plus court chemin autour du globe).
+    val scope = rememberCoroutineScope()
+    var flyJob by remember { mutableStateOf<Job?>(null) }
+    fun flyTo(lat: Float, lon: Float, targetZoom: Float) {
+        flyJob?.cancel()
+        val lat0 = centerLat
+        val lon0 = centerLon
+        val z0 = zoom
+        var dLon = lon - lon0
+        if (dLon > 180f) dLon -= 360f
+        if (dLon < -180f) dLon += 360f
+        flyJob = scope.launch {
+            val start = withFrameNanos { it }
+            while (true) {
+                val t = withFrameNanos { ((it - start) / 9e8f).coerceIn(0f, 1f) }
+                val e = t * t * (3 - 2 * t)
+                centerLat = (lat0 + (lat - lat0) * e).coerceIn(-80f, 80f)
+                centerLon = (lon0 + dLon * e).let { if (it > 180f) it - 360f else if (it < -180f) it + 360f else it }
+                zoom = exp(ln(z0) + (ln(targetZoom) - ln(z0)) * e).coerceIn(1f, MAX_ZOOM)
+                lastTouch = System.currentTimeMillis()
+                if (t >= 1f) break
+            }
+        }
+    }
+
+    // Quand on zoome sur un pays, on charge toutes ses stations (une seule fois par pays).
+    LaunchedEffect(boxes) {
+        if (boxes.isEmpty()) return@LaunchedEffect
+        snapshotFlow { Triple(zoom >= DETAIL_ZOOM, centerLat.roundToInt(), centerLon.roundToInt()) }
+            .debounce(700)
+            .collect { (zoomedIn, lat, lon) ->
+                if (!zoomedIn) return@collect
+                boxes.entries
+                    .filter { (_, b) -> lat >= b[0] && lat <= b[1] && lon >= b[2] && lon <= b[3] }
+                    .sortedBy { (_, b) -> (b[1] - b[0]) * (b[3] - b[2]) }
+                    .take(2)
+                    .forEach { vm.loadGlobeCountry(it.key) }
+            }
+    }
+
     // Rotation lente quand on ne touche à rien.
     LaunchedEffect(Unit) {
         var last = 0L
         while (true) {
             withFrameNanos { now ->
-                if (last != 0L && System.currentTimeMillis() - lastTouch > 4_000 && selected == null) {
+                // Seulement vu de loin : de près, la rotation ferait perdre l'endroit qu'on regarde.
+                if (last != 0L && zoom < 1.5f && System.currentTimeMillis() - lastTouch > 4_000 && selected == null) {
                     centerLon += (now - last) / 1e9f * 4f
                     if (centerLon > 180f) centerLon -= 360f
                 }
@@ -243,6 +378,7 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
                 .onSizeChanged { canvasSize = it.toSize() }
                 .pointerInput(Unit) {
                     detectTransformGestures { _, pan, zoomChange, _ ->
+                        flyJob?.cancel()
                         lastTouch = System.currentTimeMillis()
                         val r = radius().coerceAtLeast(1f)
                         centerLon = (centerLon - pan.x / r / DEG).let { if (it > 180f) it - 360f else if (it < -180f) it + 360f else it }
@@ -397,24 +533,94 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
             }
         }
 
-        // En-tête
-        Row(
+        // En-tête, avec la recherche
+        Column(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Column(Modifier.weight(1f)) {
-                Text("Le globe des radios", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    if (globe.stations.isEmpty()) "Fais tourner la Terre, touche un point pour écouter"
-                    else "${globe.stations.size} stations · touche un point pour écouter",
-                    fontSize = 12.sp,
-                    color = Onde.Muted,
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text("Le globe des radios", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        when {
+                            globe.stations.isEmpty() -> "Fais tourner la Terre, touche un point pour écouter"
+                            globe.loadingMore > 0 -> "${globe.stations.size} stations · chargement de la zone…"
+                            else -> "${globe.stations.size} stations · zoome pour en voir plus"
+                        },
+                        fontSize = 12.sp,
+                        color = Onde.Muted,
+                    )
+                }
+                CircleIconButton(
+                    icon = if (searchOpen) Icons.Rounded.Close else Icons.Rounded.Search,
+                    contentDescription = if (searchOpen) "Fermer la recherche" else "Chercher un lieu ou une station",
+                    onClick = {
+                        searchOpen = !searchOpen
+                        query = ""
+                    },
+                    tint = Onde.Accent,
                 )
+                // Bouton fermer seulement quand le globe est ouvert par-dessus un autre écran.
+                if (onClose != null) CircleIconButton(Icons.Rounded.Close, "Fermer le globe", onClose)
             }
-            // Bouton fermer seulement quand le globe est ouvert par-dessus un autre écran.
-            if (onClose != null) CircleIconButton(Icons.Rounded.Close, "Fermer le globe", onClose)
+
+            if (searchOpen) {
+                val focus = remember { FocusRequester() }
+                LaunchedEffect(Unit) { focus.requestFocus() }
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                    placeholder = { Text("Pays, région, ville ou station…") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(22.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Onde.Accent,
+                        unfocusedBorderColor = Onde.Line,
+                        cursorColor = Onde.Accent,
+                        focusedContainerColor = Onde.Surface,
+                        unfocusedContainerColor = Onde.Surface,
+                    ),
+                )
+                if (hits.isNotEmpty() || query.trim().length >= 2) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Onde.Surface2),
+                    ) {
+                        if (hits.isEmpty()) {
+                            Text(
+                                "Aucun lieu ni station trouvé sur le globe.",
+                                modifier = Modifier.padding(16.dp),
+                                fontSize = 13.sp,
+                                color = Onde.Muted,
+                            )
+                        }
+                        hits.forEach { hit ->
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable(role = Role.Button) {
+                                        searchOpen = false
+                                        query = ""
+                                        hit.station?.let {
+                                            selected = it
+                                            vm.play(it)
+                                        }
+                                        flyTo(hit.lat, hit.lon, hit.zoom)
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                            ) {
+                                Text(hit.label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(hit.detail, fontSize = 12.sp, color = Onde.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         when {
