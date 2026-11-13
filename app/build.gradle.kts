@@ -7,14 +7,14 @@ plugins {
 
 android {
     namespace = "app.onde.radio"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "app.onde.radio"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 29
-        versionName = "0.8.0"
+        targetSdk = 36
+        versionCode = 30
+        versionName = "0.8.1"
     }
 
     // Clé de signature fixe, fournie par les secrets GitHub KEYSTORE_BASE64 et KEYSTORE_PASSWORD
