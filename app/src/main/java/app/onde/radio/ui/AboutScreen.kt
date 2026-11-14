@@ -1,6 +1,11 @@
 package app.onde.radio.ui
 
+import android.app.AlarmManager
 import android.content.Context
+import android.os.Build
+import android.provider.Settings
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import app.onde.radio.alarm.AlarmScheduler
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.Image
@@ -260,6 +265,15 @@ private val WEEK_NAMES = mapOf(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AlarmSection(vm: MainViewModel, alarm: AlarmSettings, candidates: List<Station>) {
+    val context = LocalContext.current
+    // Revérifié à chaque retour dans l'appli (l'autorisation se donne dans les réglages d'Android).
+    var exactAllowed by remember { mutableStateOf(true) }
+    LifecycleResumeEffect(alarm) {
+        exactAllowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            context.getSystemService(AlarmManager::class.java)?.canScheduleExactAlarms() != false
+        if (exactAllowed) AlarmScheduler.schedule(context.applicationContext, alarm)
+        onPauseOrDispose { }
+    }
     var pickTime by remember { mutableStateOf(false) }
     var pickStation by remember { mutableStateOf(false) }
     val choices = remember(candidates) { candidates.distinctBy { it.uuid } }
@@ -276,6 +290,34 @@ private fun AlarmSection(vm: MainViewModel, alarm: AlarmSettings, candidates: Li
             checked = alarm.enabled && alarm.station != null,
             onChange = { on -> vm.updateAlarm { it.copy(enabled = on && it.station != null) } },
         )
+
+        // Android 12+ : sans cette autorisation, le réveil peut sonner avec quelques minutes d'écart.
+        if (alarm.enabled && !exactAllowed) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .border(1.dp, Onde.Accent, RoundedCornerShape(16.dp))
+                    .clickable(role = Role.Button) {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:" + context.packageName))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("Autoriser le réveil à l'heure exacte", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Onde.Accent)
+                Text(
+                    "Sans cette autorisation, Android peut décaler le réveil de quelques minutes. " +
+                        "Touche ici, puis active « Alarmes et rappels » pour Radio Onde.",
+                    fontSize = 13.sp,
+                    color = Onde.TextSoft,
+                )
+            }
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             SettingButton(

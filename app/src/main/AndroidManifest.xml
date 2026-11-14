@@ -8,10 +8,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Réveil radio -->
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <uses-permission
-        android:name="android.permission.SCHEDULE_EXACT_ALARM"
-        android:maxSdkVersion="32" />
+    <!-- Google Play réserve USE_EXACT_ALARM aux applis dont le réveil est la fonction principale :
+         on demande donc l'autorisation que l'utilisateur accorde lui-même dans les réglages. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application

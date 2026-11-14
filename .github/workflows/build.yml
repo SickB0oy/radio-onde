@@ -77,7 +77,8 @@ jobs:
             fi
             echo "Clé de signature OK."
           fi
-          ./gradlew assembleRelease --stacktrace
+          # L'APK pour GitHub/Obtainium, et le bundle (.aab) demandé par Google Play.
+          ./gradlew assembleRelease bundleRelease --stacktrace
 
       - name: Renommer l'APK
         run: |
@@ -85,12 +86,13 @@ jobs:
           # Nom fixe : https://github.com/SickB0oy/radio-onde/releases/latest/download/RadioOnde.apk
           # télécharge toujours la dernière version.
           cp app/build/outputs/apk/release/*.apk dist/RadioOnde.apk
+          cp app/build/outputs/bundle/release/*.aab dist/RadioOnde.aab
 
       - name: Mettre l'APK à disposition
         uses: actions/upload-artifact@v4
         with:
           name: RadioOnde-apk
-          path: dist/*.apk
+          path: dist/*
 
       # Chaque envoi sur main publie (ou met à jour) la version « v<versionName> » dans Releases.
       # Pour une nouvelle version, augmenter versionCode et versionName dans app/build.gradle.kts.
@@ -101,5 +103,7 @@ jobs:
           tag_name: v${{ steps.version.outputs.name }}
           name: Radio Onde ${{ steps.version.outputs.name }}
           target_commitish: ${{ github.sha }}
-          files: dist/*.apk
+          files: |
+            dist/RadioOnde.apk
+            dist/RadioOnde.aab
           generate_release_notes: true
