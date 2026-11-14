@@ -37,6 +37,8 @@ data class LibraryData(
     val stationsRefreshedMs: Long = 0L,
     /** Volume égalisé entre les stations (activé par défaut). */
     val volumeLeveling: Boolean = true,
+    /** Relancer la dernière station dès l'ouverture de l'appli (désactivé par défaut). */
+    val autoPlayOnLaunch: Boolean = false,
     val alarm: AlarmSettings = AlarmSettings(),
 )
 
@@ -100,6 +102,8 @@ class LibraryStore(private val file: File, private val scope: CoroutineScope) {
     fun setCountry(code: String) = edit { it.copy(countryCode = code) }
 
     fun setVolumeLeveling(enabled: Boolean) = edit { it.copy(volumeLeveling = enabled) }
+
+    fun setAutoPlayOnLaunch(enabled: Boolean) = edit { it.copy(autoPlayOnLaunch = enabled) }
 
     fun updateAlarm(transform: (AlarmSettings) -> AlarmSettings) = edit { it.copy(alarm = transform(it.alarm)) }
 

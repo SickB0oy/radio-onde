@@ -146,7 +146,9 @@ class PlaybackEngine(
         .setWakeMode(C.WAKE_MODE_NETWORK)
         .build()
 
-    private val _state = MutableStateFlow(PlayerUiState())
+    // Au démarrage, la dernière station écoutée est déjà là, prête à être relancée d'un toucher.
+    private val _state = MutableStateFlow(PlayerUiState(station = library.data.value.recent.firstOrNull()))
+    private var launchHandled = false
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
     init {
@@ -286,6 +288,18 @@ class PlaybackEngine(
         val floor = if (liveFloorMs == Long.MAX_VALUE) 0L else liveFloorMs
         val target = (rec.buffer.written - (delayMs + floor) / 1000.0 * bps).toLong().coerceIn(min, max)
         prepareAt(target)
+    }
+
+    /**
+     * Appelé une fois à l'ouverture de l'écran : relance la dernière station si l'option
+     * « Lecture à l'ouverture » est activée et que rien n'est déjà en cours.
+     */
+    fun onAppOpened() {
+        if (launchHandled) return
+        launchHandled = true
+        if (!library.data.value.autoPlayOnLaunch) return
+        if (player.isPlaying || player.mediaItemCount > 0 || _state.value.isBuffering) return
+        _state.value.station?.let(::play)
     }
 
     fun setVolumeLeveling(enabled: Boolean) {

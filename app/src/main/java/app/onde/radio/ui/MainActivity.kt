@@ -126,6 +126,8 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
     }
 
     val overlayOpen = aboutOpen || zappingOpen || playerOpen || searchOpen
+    LaunchedEffect(Unit) { vm.engine.onAppOpened() }
+
     BackHandler(enabled = overlayOpen || tab != Tab.Home) {
         if (overlayOpen) closeOverlays() else tab = Tab.Home
     }
@@ -210,6 +212,7 @@ private fun MiniPlayer(state: PlayerUiState, onOpen: () -> Unit, onToggle: () ->
     val status = when {
         state.isBuffering && !state.isPlaying -> "Connexion…"
         !state.isLive -> "−${formatDuration(state.delayMs)} du direct"
+        !state.isPlaying -> "En pause"
         else -> "En direct"
     }
     Row(

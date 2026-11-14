@@ -89,6 +89,13 @@ fun AboutScreen(vm: MainViewModel, onClose: () -> Unit) {
                 checked = library.volumeLeveling,
                 onChange = vm.engine::setVolumeLeveling,
             )
+            SwitchRow(
+                title = "Lecture à l'ouverture",
+                body = "Relance automatiquement la dernière station écoutée dès que tu ouvres l'appli. " +
+                    "Désactivé : elle t'attend en bas de l'écran, prête à repartir d'un toucher.",
+                checked = library.autoPlayOnLaunch,
+                onChange = vm.library::setAutoPlayOnLaunch,
+            )
         }
 
         // ------------------------------------------------------------ Réveil
