@@ -78,6 +78,7 @@ import java.nio.ByteOrder
 import java.text.Normalizer
 import java.util.Locale
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.acos
 import kotlin.math.asin
 import kotlin.math.sqrt
@@ -133,6 +134,24 @@ private class Camera(latDeg: Float, lonDeg: Float, val r: Float, val cx: Float, 
     }
 }
 
+/** Garde le dégradé de la sphère tant que ni le zoom ni la taille de l'écran ne changent. */
+private class BrushCache {
+    private var r = -1f
+    private var center = Offset.Unspecified
+    private var brush: Brush? = null
+
+    fun get(radius: Float, c: Offset): Brush {
+        brush?.let { if (radius == r && c == center) return it }
+        r = radius
+        center = c
+        return Brush.radialGradient(
+            colors = listOf(Color(0xFF0E2A1D), Color(0xFF04100A)),
+            center = c + Offset(-radius * 0.35f, -radius * 0.35f),
+            radius = radius * 1.4f,
+        ).also { brush = it }
+    }
+}
+
 /** Tableau de nombres réutilisé d'une image à l'autre (aucune allocation pendant qu'on bouge le globe). */
 private class FloatBuf(capacity: Int = 4096) {
     var data = FloatArray(capacity)
@@ -167,8 +186,12 @@ private class LineSet(
 ) {
     val count get() = start.size
 
-    /** Remplit [out] avec les segments visibles (x0, y0, x1, y1…), coupés à l'horizon. */
-    fun visibleSegments(cam: Camera, viewAngle: Float, w: Float, h: Float, out: FloatBuf) {
+    /**
+     * Remplit [out] avec les segments visibles (x0, y0, x1, y1…), coupés à l'horizon.
+     * Les points à moins de [minStep] pixels du précédent sont sautés : le niveau de détail
+     * s'adapte tout seul au zoom, et on n'envoie jamais plus de traits que l'écran ne peut en montrer.
+     */
+    fun visibleSegments(cam: Camera, viewAngle: Float, w: Float, h: Float, minStep: Float, out: FloatBuf) {
         out.n = 0
         val r = cam.r
         for (c in 0 until count) {
@@ -184,6 +207,12 @@ private class LineSet(
                 if (x * cam.fx + y * cam.fy + z * cam.fz > 0f) {
                     val sx = cam.cx + r * (x * cam.ex + y * cam.ey)
                     val sy = cam.cy - r * (x * cam.nx + y * cam.ny + z * cam.nz)
+                    // Trop près du point précédent pour se voir : on passe (sauf au bout du tronçon,
+                    // pour rester raccordé au tronçon voisin).
+                    if (has && i < last && abs(sx - px) + abs(sy - py) < minStep) {
+                        i += 3
+                        continue
+                    }
                     // On saute les segments entièrement hors de l'écran, du même côté.
                     if (has && !((px < 0f && sx < 0f) || (px > w && sx > w) || (py < 0f && sy < 0f) || (py > h && sy > h))) {
                         out.add4(px, py, sx, sy)
@@ -388,9 +417,16 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
     // Tampons et pinceaux réutilisés à chaque image.
     val lineBuf = remember { FloatBuf(16384) }
     val dotBufs = remember { Array(3) { FloatBuf() } }
+    // Traits à bouts droits : bien plus rapides à tracer par milliers que des bouts arrondis.
     val linePaint = remember {
-        Paint().apply { isAntiAlias = true; style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+        Paint().apply { isAntiAlias = true; style = Paint.Style.STROKE; strokeCap = Paint.Cap.BUTT }
     }
+    val dotPaint = remember {
+        Paint().apply { isAntiAlias = true; style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; color = android.graphics.Color.WHITE }
+    }
+    val minStepPx = with(LocalDensity.current) { 1.dp.toPx() }
+    // Le dégradé de la sphère est recréé seulement quand le zoom ou la taille changent.
+    val sphereBrush = remember { BrushCache() }
     var centerLon by remember { mutableFloatStateOf(2f) }   // départ : l'Europe
     var centerLat by remember { mutableFloatStateOf(30f) }
     var zoom by remember { mutableFloatStateOf(1f) }
@@ -514,16 +550,14 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
             val r = radius()
 
             // La sphère
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color(0xFF0E2A1D), Color(0xFF04100A)),
-                    center = c + Offset(-r * 0.35f, -r * 0.35f),
-                    radius = r * 1.4f,
-                ),
-                radius = r,
-                center = c,
-            )
-            drawCircle(Onde.Accent.copy(alpha = 0.35f), radius = r, center = c, style = Stroke(width = 1.dp.toPx()))
+            val brush = sphereBrush.get(r, c)
+            if (r > hypot(size.width, size.height) / 2) {
+                // Le globe déborde de l'écran : un simple rectangle suffit.
+                drawRect(brush)
+            } else {
+                drawCircle(brush = brush, radius = r, center = c)
+                drawCircle(Onde.Accent.copy(alpha = 0.35f), radius = r, center = c, style = Stroke(width = 1.dp.toPx()))
+            }
 
             val cam = Camera(centerLat, centerLon, r, c.x, c.y)
             // Angle entre le centre de l'écran et son coin, vu depuis le centre de la Terre.
@@ -536,7 +570,7 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
             // Chaque tracé part en un seul lot de segments, sans rien allouer.
             fun drawLines(set: LineSet, alpha: Float, width: Float) {
                 if (set.count == 0) return
-                set.visibleSegments(cam, viewAngle, size.width, size.height, lineBuf)
+                set.visibleSegments(cam, viewAngle, size.width, size.height, minStepPx, lineBuf)
                 if (lineBuf.n == 0) return
                 linePaint.color = Onde.Accent.copy(alpha = alpha).toArgb()
                 linePaint.strokeWidth = width
@@ -569,11 +603,10 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
                     drawCircle(Color.White.copy(alpha = 0.25f + 0.75f * (depth / 0.5f)), radius = dot / 2, center = Offset(x, y))
                 }
             }
-            linePaint.color = android.graphics.Color.WHITE
             for (k in 0..2) {
                 if (dotBufs[k].n == 0) continue
-                linePaint.strokeWidth = if (k == 2) bigDotPx else if (k == 1) midDotPx else dotPx
-                native.drawPoints(dotBufs[k].data, 0, dotBufs[k].n, linePaint)
+                dotPaint.strokeWidth = if (k == 2) bigDotPx else if (k == 1) midDotPx else dotPx
+                native.drawPoints(dotBufs[k].data, 0, dotBufs[k].n, dotPaint)
             }
 
             // Station touchée : un anneau et, en petit, la ville et le pays à côté du point.
