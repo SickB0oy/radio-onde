@@ -1,6 +1,7 @@
 package app.onde.radio
 
 import android.app.Application
+import app.onde.radio.alarm.AlarmScheduler
 import app.onde.radio.data.LibraryStore
 import app.onde.radio.data.RadioBrowserApi
 import app.onde.radio.player.PlaybackEngine
@@ -36,6 +37,8 @@ class OndeApp : Application() {
         api = RadioBrowserApi(http)
         library = LibraryStore(File(filesDir, "library.json"), appScope)
         engine = PlaybackEngine(this, http, api, library)
+        // Le réveil est reprogrammé à chaque démarrage (après une mise à jour de l'appli, par exemple).
+        AlarmScheduler.schedule(this, library.data.value.alarm)
         // Adresses à jour pour les favoris (au plus une fois par jour, en arrière-plan).
         appScope.launch { library.refreshStationsIfNeeded(api) }
     }

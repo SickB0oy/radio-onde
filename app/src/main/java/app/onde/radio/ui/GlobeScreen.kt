@@ -71,6 +71,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.ByteBuffer
@@ -321,7 +322,9 @@ private class GlobeHit(
 )
 
 private fun normalizeText(s: String): String =
-    Normalizer.normalize(s.lowercase(Locale.ROOT), Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "").trim()
+    Normalizer.normalize(s.lowercase(Locale.ROOT), Normalizer.Form.NFD).replace(ACCENTS, "").trim()
+
+private val ACCENTS = Regex("\\p{Mn}+")
 
 /**
  * Index des lieux, construit à partir des stations elles-mêmes (rien à télécharger) : chaque pays
@@ -447,7 +450,11 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
     // Recherche d'un pays, d'une région, d'une ville ou d'une station.
     var searchOpen by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    val placeIndex = remember(points, searchOpen) { if (searchOpen) PlaceIndex(points) else null }
+    // L'index des lieux est construit en arrière-plan, à l'ouverture de la recherche.
+    var placeIndex by remember { mutableStateOf<PlaceIndex?>(null) }
+    LaunchedEffect(points, searchOpen) {
+        placeIndex = if (searchOpen) withContext(Dispatchers.Default) { PlaceIndex(points) } else null
+    }
     val hits = remember(placeIndex, query) { placeIndex?.search(query).orEmpty() }
     BackHandler(enabled = searchOpen) { searchOpen = false }
 
@@ -491,13 +498,19 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
             }
     }
 
-    // Rotation lente quand on ne touche à rien.
+    // Rotation lente quand on ne touche à rien, seulement vu de loin (de près, elle ferait perdre
+    // l'endroit qu'on regarde). Le reste du temps, on ne demande aucune image : rien ne tourne à vide.
     LaunchedEffect(Unit) {
         var last = 0L
         while (true) {
+            val canRotate = zoom < 1.5f && selected == null && System.currentTimeMillis() - lastTouch > 4_000
+            if (!canRotate) {
+                last = 0L
+                delay(250)
+                continue
+            }
             withFrameNanos { now ->
-                // Seulement vu de loin : de près, la rotation ferait perdre l'endroit qu'on regarde.
-                if (last != 0L && zoom < 1.5f && System.currentTimeMillis() - lastTouch > 4_000 && selected == null) {
+                if (last != 0L) {
                     centerLon += (now - last) / 1e9f * 4f
                     if (centerLon > 180f) centerLon -= 360f
                 }

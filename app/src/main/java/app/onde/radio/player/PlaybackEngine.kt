@@ -3,6 +3,7 @@ package app.onde.radio.player
 import android.content.ComponentName
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -48,10 +49,8 @@ data class PlayerUiState(
     val station: Station? = null,
     val isPlaying: Boolean = false,
     val isBuffering: Boolean = false,
-    /** Retard par rapport au direct, en millisecondes. */
+    /** Retard par rapport au direct, en millisecondes (0 tant qu'on est en direct, arrondi à la seconde sinon). */
     val delayMs: Long = 0,
-    /** Durée disponible dans le tampon, en millisecondes. */
-    val bufferMs: Long = 0,
     val current: TrackMark? = null,
     val previous: TrackMark? = null,
     val message: String? = null,
@@ -101,6 +100,12 @@ class PlaybackEngine(
     private var direct = false
     private val directMarks = mutableListOf<TrackMark>()
     private val directCandidates = ArrayDeque<Pair<String, Boolean>>()
+    /** Adresse lue en ce moment en lecture directe, et nombre de relances après une coupure. */
+    private var currentDirect: Pair<String, Boolean>? = null
+    private var directRetries = 0
+    private var directHasPlayed = false
+    /** Moment où la lecture a été mise en pause (0 = pas en pause). */
+    private var pausedSince = 0L
     private var lastNotifiedMark: TrackMark? = null
     private var listenedMs = 0L
     private var lastHistoryId = 0L
@@ -162,11 +167,17 @@ class PlaybackEngine(
                 // Si la lecture via le tampon échoue, on essaie de lire le flux directement,
                 // puis l'adresse d'origine de la station, avant d'abandonner.
                 if (!direct) releaseRecorder()
-                if (!startNextDirect(station)) {
-                    _state.update {
-                        it.copy(isBuffering = false, message = "Cette station ne répond pas (${error.errorCodeName})")
-                    }
+                if (startNextDirect(station) || retryDirect()) return
+                _state.update {
+                    it.copy(isBuffering = false, message = "Cette station ne répond pas (${error.errorCodeName})")
                 }
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                // Le flux s'est arrêté tout seul (coupure réseau prolongée, serveur qui ferme la connexion).
+                if (playbackState != Player.STATE_ENDED || _state.value.station == null) return
+                if (direct && retryDirect()) return
+                _state.update { it.copy(isBuffering = false, message = "Connexion perdue. Touche lecture pour relancer la station.") }
             }
 
             override fun onMetadata(metadata: Metadata) {
@@ -190,7 +201,9 @@ class PlaybackEngine(
         })
         scope.launch {
             while (true) {
-                delay(TICK_MS)
+                // Au repos (rien en lecture ni en pause), on ne réveille le téléphone que rarement.
+                val active = player.isPlaying || recorder != null || player.mediaItemCount > 0
+                delay(if (active) TICK_MS else IDLE_TICK_MS)
                 tick()
             }
         }
@@ -212,6 +225,8 @@ class PlaybackEngine(
             startAbs = 0L
             liveFloorMs = Long.MAX_VALUE
             playingSinceStartMs = 0L
+            pausedSince = 0L
+            currentDirect = null
             _state.value = PlayerUiState(station = station, isBuffering = true, sleepEndMs = _state.value.sleepEndMs)
             library.onStationPlayed(station)
             if (!station.isCustom) scope.launch { api.countClick(station.uuid) }
@@ -262,7 +277,9 @@ class PlaybackEngine(
             return
         }
         val station = _state.value.station ?: return
-        if (player.playbackState == Player.STATE_IDLE || player.mediaItemCount == 0) {
+        // Lecteur arrêté ou flux terminé : « lecture » ne ferait rien, on relance la station.
+        val state = player.playbackState
+        if (state == Player.STATE_IDLE || state == Player.STATE_ENDED || player.mediaItemCount == 0) {
             play(station)
         } else {
             player.play()
@@ -372,17 +389,53 @@ class PlaybackEngine(
 
     /** Lance la prochaine adresse de secours ; renvoie false s'il n'y en a plus. */
     private fun startNextDirect(station: Station): Boolean {
-        val (url, hls) = directCandidates.removeFirstOrNull() ?: return false
+        val candidate = directCandidates.removeFirstOrNull() ?: return false
         direct = true
+        currentDirect = candidate
+        directRetries = 0
+        directHasPlayed = false
+        prepareDirect(station, candidate)
+        return true
+    }
+
+    private fun prepareDirect(station: Station, candidate: Pair<String, Boolean>) {
         val builder = MediaItem.Builder()
             .setMediaId(station.uuid)
-            .setUri(url)
-            .setMediaMetadata(metadataFor(station, null))
-        if (hls) builder.setMimeType(MimeTypes.APPLICATION_M3U8)
+            .setUri(candidate.first)
+            .setMediaMetadata(metadataFor(station, directMarks.lastOrNull()?.takeIf { it.isTrack }))
+        if (candidate.second) builder.setMimeType(MimeTypes.APPLICATION_M3U8)
         player.setMediaItem(builder.build())
         player.prepare()
         player.play()
+    }
+
+    /**
+     * Lecture directe coupée alors qu'elle marchait (changement de réseau, tunnel…) : on relance
+     * la même adresse, jusqu'à trois fois, en attendant un peu plus à chaque essai.
+     */
+    private fun retryDirect(): Boolean {
+        val candidate = currentDirect ?: return false
+        val station = _state.value.station ?: return false
+        if (!direct || !directHasPlayed || directRetries >= 3) return false
+        directRetries++
+        val mySession = session
+        _state.update { it.copy(isBuffering = true) }
+        scope.launch {
+            delay(2_000L * directRetries)
+            if (mySession == session && player.playWhenReady) prepareDirect(station, candidate)
+        }
         return true
+    }
+
+    /** Coupe le flux après une trop longue pause : inutile de télécharger la radio pour rien. */
+    private fun stopStream() {
+        session++
+        pausedSince = 0L
+        player.stop()
+        player.clearMediaItems()
+        releaseRecorder()
+        direct = false
+        currentDirect = null
     }
 
     /** Ce qu'ExoPlayer a déjà chargé mais pas encore joué, en millisecondes. */
@@ -435,6 +488,7 @@ class PlaybackEngine(
             isTrack = parsed != null,
         )
         directMarks += mark
+        if (directMarks.size > 50) directMarks.removeAt(0)
         onTrackMark(station, mark)
     }
 
@@ -453,7 +507,20 @@ class PlaybackEngine(
             .build()
 
     private fun tick() {
+        // En pause depuis trop longtemps : on arrête de recevoir la radio (données et batterie).
+        val paused = !player.playWhenReady && (recorder != null || player.mediaItemCount > 0)
+        if (!paused) {
+            pausedSince = 0L
+        } else {
+            val now = SystemClock.elapsedRealtime()
+            if (pausedSince == 0L) pausedSince = now
+            else if (now - pausedSince > PAUSE_LIMIT_MS) stopStream()
+        }
         if (player.isPlaying) {
+            if (direct) {
+                directHasPlayed = true
+                directRetries = 0
+            }
             listenedMs += TICK_MS
             playingSinceStartMs += TICK_MS
             if (listenedMs >= 60_000) {
@@ -474,7 +541,6 @@ class PlaybackEngine(
         val station = _state.value.station
         val rec = recorder
         var delayMs = 0L
-        var bufferMs = 0L
         var current: TrackMark? = null
         var previous: TrackMark? = null
 
@@ -484,8 +550,10 @@ class PlaybackEngine(
             val raw = rawDelayMs(rec)
             // Le plus petit retard constaté en écoute normale = le « direct » de cette station.
             if (player.isPlaying && playingSinceStartMs >= 3_000) liveFloorMs = minOf(liveFloorMs, raw)
-            delayMs = if (liveFloorMs == Long.MAX_VALUE) 0 else (raw - liveFloorMs).coerceAtLeast(0)
-            bufferMs = ((rec.buffer.written - rec.buffer.oldest) * 1000 / bps).toLong().coerceAtLeast(0)
+            // En direct, le retard varie sans cesse de quelques dixièmes de seconde : on publie 0, et sinon
+            // une valeur arrondie à la seconde, pour ne pas redessiner l'écran deux fois par seconde pour rien.
+            val exact = if (liveFloorMs == Long.MAX_VALUE) 0 else (raw - liveFloorMs).coerceAtLeast(0)
+            delayMs = if (exact < LIVE_THRESHOLD_MS) 0 else exact / 1000 * 1000
             val marks = rec.marks
             val idx = marks.indexOfLast { it.absPos <= pa }
             current = marks.getOrNull(idx)?.takeIf { it.isTrack }
@@ -501,7 +569,12 @@ class PlaybackEngine(
             }
         } else if (direct) {
             current = directMarks.lastOrNull()?.takeIf { it.isTrack }
-            previous = directMarks.dropLast(1).lastOrNull { it.isTrack }
+            for (i in directMarks.size - 2 downTo 0) {
+                if (directMarks[i].isTrack) {
+                    previous = directMarks[i]
+                    break
+                }
+            }
         }
 
         _state.update {
@@ -510,7 +583,6 @@ class PlaybackEngine(
                 isBuffering = player.playbackState == Player.STATE_BUFFERING ||
                     (station != null && player.mediaItemCount == 0 && it.isBuffering),
                 delayMs = delayMs,
-                bufferMs = bufferMs,
                 current = current,
                 previous = previous,
             )
@@ -519,6 +591,9 @@ class PlaybackEngine(
 
     companion object {
         const val TICK_MS = 500L
+        const val IDLE_TICK_MS = 3_000L
+        /** Au-delà de cette durée de pause, on coupe le flux ; « lecture » le relancera en direct. */
+        const val PAUSE_LIMIT_MS = 30 * 60 * 1000L
         const val SLEEP_FADE_MS = 30_000L
         /** Tampon de pause en mémoire : environ 25 min à 128 kbit/s. */
         const val PAUSE_BUFFER_BYTES = 24 * 1024 * 1024

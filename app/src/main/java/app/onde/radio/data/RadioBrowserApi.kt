@@ -80,6 +80,8 @@ class RadioBrowserApi(private val client: OkHttpClient) {
                 throw e
             } catch (e: Exception) {
                 last = e
+                // Miroir en panne : on le passe en dernier pour que les prochaines requêtes n'attendent plus dessus.
+                hosts = hosts?.let { it - host + host }
             }
         }
         throw last ?: IOException("Aucun serveur Radio-Browser disponible")

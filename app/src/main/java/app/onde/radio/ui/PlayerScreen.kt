@@ -33,6 +33,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -49,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import app.onde.radio.player.PlaybackEngine
 import app.onde.radio.player.PlayerUiState
 import app.onde.radio.ui.theme.Onde
+import kotlinx.coroutines.delay
 import coil.compose.AsyncImage
 
 @Composable
@@ -229,9 +231,16 @@ fun PlayerScreen(
         }
 
         if (state.sleepEndMs > 0) {
-            val sleepLeftMs = state.sleepEndMs - System.currentTimeMillis()
+            // Le compte à rebours se met à jour tout seul, sans dépendre du reste de l'écran.
+            val sleepEnd = state.sleepEndMs
+            val minutesLeft by produceState(minutesUntil(sleepEnd), sleepEnd) {
+                while (true) {
+                    value = minutesUntil(sleepEnd)
+                    delay(5_000)
+                }
+            }
             Text(
-                "Arrêt dans ${(sleepLeftMs / 60_000 + 1).coerceAtLeast(1)} min",
+                "Arrêt dans $minutesLeft min",
                 modifier = Modifier.fillMaxWidth(),
                 fontSize = 13.sp,
                 color = Onde.Accent,
@@ -334,6 +343,9 @@ private fun WideButton(
         Text(label, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Onde.Text.copy(alpha = alpha), maxLines = 1)
     }
 }
+
+private fun minutesUntil(endMs: Long): Long =
+    ((endMs - System.currentTimeMillis()) / 60_000 + 1).coerceAtLeast(1)
 
 @Composable
 private fun SleepTimerDialog(active: Boolean, onPick: (Int?) -> Unit, onDismiss: () -> Unit) {

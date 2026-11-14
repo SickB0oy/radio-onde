@@ -9,6 +9,9 @@ import android.os.Build
 import app.onde.radio.OndeApp
 import app.onde.radio.data.AlarmSettings
 import app.onde.radio.ui.MainActivity
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Calendar
 
 /** Programme le prochain réveil radio dans le système (visible dans la barre d'état comme un réveil). */
@@ -62,8 +65,19 @@ class AlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext as OndeApp
         val alarm = app.library.data.value.alarm
-        alarm.station?.takeIf { alarm.enabled }?.let { app.engine.playForAlarm(it) }
         AlarmScheduler.schedule(app, alarm)
+        val station = alarm.station?.takeIf { alarm.enabled } ?: return
+        app.engine.playForAlarm(station)
+        // La connexion à la radio prend quelques secondes : on demande à Android de garder l'appli
+        // en vie jusqu'à ce que le son démarre (le service de lecture prend ensuite le relais).
+        val pending = goAsync()
+        app.appScope.launch {
+            try {
+                withTimeoutOrNull(8_000) { app.engine.state.first { it.isPlaying } }
+            } finally {
+                pending.finish()
+            }
+        }
     }
 }
 
@@ -71,6 +85,7 @@ class AlarmReceiver : BroadcastReceiver() {
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED &&
+            intent.action != Intent.ACTION_MY_PACKAGE_REPLACED &&
             intent.action != AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED
         ) return
         val app = context.applicationContext as OndeApp

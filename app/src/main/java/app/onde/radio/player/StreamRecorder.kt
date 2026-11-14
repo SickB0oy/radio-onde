@@ -91,6 +91,7 @@ class StreamRecorder(
     private fun runLoop() {
         var failures = 0
         while (!stopped) {
+            val startedAt = System.currentTimeMillis()
             try {
                 connectAndPump()
                 failures = 0
@@ -100,6 +101,8 @@ class StreamRecorder(
                 break
             } catch (e: IOException) {
                 if (stopped) break
+                // Une connexion qui a tenu un moment n'est pas un échec répété : on repart de zéro.
+                if (ready.isCompleted && System.currentTimeMillis() - startedAt > 30_000) failures = 0
                 failures++
                 if (!ready.isCompleted && failures >= 3) {
                     ready.completeExceptionally(e)

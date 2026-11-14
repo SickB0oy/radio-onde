@@ -4,14 +4,18 @@ import java.io.Closeable
 import java.io.InterruptedIOException
 
 /**
- * Tampon circulaire en mémoire vive qui garde au plus [capacity] octets d'un flux.
+ * Tampon circulaire en mémoire vive qui garde au plus [maxCapacity] octets d'un flux.
  * Rien n'est écrit sur le stockage du téléphone.
+ *
+ * Il démarre petit (1 Mo, bien assez pour l'écoute en direct) et ne grandit que si l'on met en
+ * pause : changer de station ne coûte donc presque rien en mémoire, même sur un téléphone modeste.
  *
  * Les positions sont « absolues » : la position 0 est le premier octet reçu depuis
  * le lancement de la station. Seuls les octets entre [oldest] et [written] sont lisibles.
  */
-class RingBuffer(private val capacity: Int) : Closeable {
+class RingBuffer(private val maxCapacity: Int, initialCapacity: Int = 1 shl 20) : Closeable {
 
+    @Volatile private var capacity = minOf(initialCapacity, maxCapacity)
     private var memory: ByteArray? = ByteArray(capacity)
     private val lock = Object()
     @Volatile private var floor = 0L
@@ -39,8 +43,32 @@ class RingBuffer(private val capacity: Int) : Closeable {
 
     fun write(buf: ByteArray, off: Int, len: Int) {
         synchronized(lock) {
-            val mem = memory ?: return
+            var mem = memory ?: return
             if (finished) return
+            // Pas assez de place pour tout garder (on est en pause) : on agrandit, jusqu'au maximum.
+            val needed = written + len - floor
+            if (needed > capacity && capacity < maxCapacity) {
+                var newCap = capacity.toLong()
+                while (newCap < needed && newCap < maxCapacity) newCap = minOf(newCap * 2, maxCapacity.toLong())
+                val grown = try {
+                    ByteArray(newCap.toInt())
+                } catch (_: OutOfMemoryError) {
+                    null // téléphone à court de mémoire : on garde la taille actuelle
+                }
+                if (grown != null) {
+                    var pos = oldest
+                    while (pos < written) {
+                        val src = (pos % capacity).toInt()
+                        val dst = (pos % grown.size).toInt()
+                        val n = minOf(written - pos, (capacity - src).toLong(), (grown.size - dst).toLong()).toInt()
+                        System.arraycopy(mem, src, grown, dst, n)
+                        pos += n
+                    }
+                    memory = grown
+                    mem = grown
+                    capacity = grown.size
+                }
+            }
             var o = off
             var remaining = len
             while (remaining > 0) {

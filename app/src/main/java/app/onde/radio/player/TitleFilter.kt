@@ -60,6 +60,9 @@ object TitleFilter {
         return artist to title
     }
 
+    private val MARKS = Regex("\\p{Mn}+")
+    private val NOT_ALNUM = Regex("[^a-z0-9]+")
+
     private fun looksStructured(raw: String): Boolean {
         val t = raw.trim()
         return t.startsWith("<") || t.contains("<?xml", ignoreCase = true) ||
@@ -97,7 +100,7 @@ object TitleFilter {
 
     private fun normalize(s: String): String =
         Normalizer.normalize(s.lowercase(Locale.ROOT), Normalizer.Form.NFD)
-            .replace(Regex("\\p{Mn}+"), "")
-            .replace(Regex("[^a-z0-9]+"), " ")
+            .replace(MARKS, "")
+            .replace(NOT_ALNUM, " ")
             .trim()
 }
