@@ -7,6 +7,7 @@ import app.onde.radio.OndeApp
 import app.onde.radio.alarm.AlarmScheduler
 import app.onde.radio.data.AlarmSettings
 import app.onde.radio.data.Genres
+import app.onde.radio.data.RadioBrowserApi
 import app.onde.radio.data.Recommender
 import app.onde.radio.data.Station
 import app.onde.radio.data.Suggestion
@@ -27,6 +28,9 @@ data class GenreState(
     val loading: Boolean = false,
     val stations: List<Station> = emptyList(),
     val error: String? = null,
+    val loadingMore: Boolean = false,
+    /** Plus rien à charger pour ce genre. */
+    val endReached: Boolean = false,
 )
 
 data class HomeState(
@@ -36,6 +40,8 @@ data class HomeState(
     val recoTitle: String = "Pour toi",
     val reco: List<Suggestion> = emptyList(),
     val trends: List<Station> = emptyList(),
+    val trendsLoadingMore: Boolean = false,
+    val trendsEnd: Boolean = false,
     /** Onglet affiché : [Genres.FOR_YOU], [Genres.OTHERS] ou la clé d'un genre. */
     val selectedGenre: String = Genres.FOR_YOU,
     /** Stations déjà chargées, par clé de genre. */
@@ -60,7 +66,47 @@ data class SearchState(
     val loading: Boolean = false,
     val results: List<Station> = emptyList(),
     val error: String? = null,
+    val loadingMore: Boolean = false,
+    val endReached: Boolean = false,
 )
+
+private const val PAGE = 40
+
+/**
+ * Parcourt un genre page par page : d'abord les stations du pays choisi, puis, quand il n'y en
+ * a plus, celles du reste du monde.
+ */
+private class GenrePager(private val tags: List<String>, countryCode: String) {
+    private val country = RadioBrowserApi.countryFilter(countryCode)
+    private var localOffset = 0
+    private var worldOffset = 0
+    private var localDone = country == null
+    var done = false
+        private set
+
+    suspend fun next(api: RadioBrowserApi): List<Station> {
+        val out = ArrayList<Station>()
+        if (!localDone) {
+            val page = api.genrePage(tags, country, PAGE, localOffset)
+            localOffset += PAGE
+            out += page
+            if (page.size < PAGE / 4) localDone = true
+        }
+        if (localDone && out.size < 15) {
+            val page = api.genrePage(tags, null, PAGE, worldOffset)
+            worldOffset += PAGE
+            out += page
+            if (page.isEmpty()) done = true
+        }
+        return out
+    }
+}
+
+private fun List<Station>.plusNew(more: List<Station>): List<Station> {
+    val ids = mapTo(HashSet()) { it.uuid }
+    val names = mapTo(HashSet()) { it.name.trim().lowercase() }
+    return this + more.filter { ids.add(it.uuid) && names.add(it.name.trim().lowercase()) }
+}
 
 @OptIn(FlowPreview::class)
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -89,10 +135,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     return@collectLatest
                 }
                 _search.value = SearchState(query = q, loading = true)
+                searchOffset = PAGE
                 _search.value = runCatching { onde.api.search(text) }.fold(
-                    onSuccess = { SearchState(query = q, results = it) },
+                    onSuccess = { SearchState(query = q, results = it, endReached = it.isEmpty()) },
                     onFailure = { SearchState(query = q, error = "Recherche impossible. Vérifie ta connexion.") },
                 )
+            }
+        }
+    }
+
+    private var searchOffset = 0
+
+    /** Suite des résultats de recherche (appelée quand on arrive en bas de la liste). */
+    fun loadMoreSearch() {
+        val s = _search.value
+        if (s.loading || s.loadingMore || s.endReached || s.results.isEmpty()) return
+        val q = s.query
+        _search.update { it.copy(loadingMore = true) }
+        viewModelScope.launch {
+            val page = runCatching { onde.api.search(q.trim(), PAGE, searchOffset) }.getOrNull()
+            if (_search.value.query != q) return@launch
+            searchOffset += PAGE
+            _search.update {
+                val merged = it.results.plusNew(page.orEmpty())
+                it.copy(results = merged, loadingMore = false, endReached = page.isNullOrEmpty())
             }
         }
     }
@@ -104,7 +170,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshHome() {
         val country = currentCountry()
-        _home.update { it.copy(loading = true, error = null, country = country) }
+        _home.update { it.copy(loading = true, error = null, country = country, trendsEnd = false) }
+        trendsOffset = 10
         viewModelScope.launch {
             val trends = async { runCatching { onde.api.trending(country) } }
             val reco = async { runCatching { recommender.forYou(library.data.value, country) } }
@@ -121,6 +188,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    private var trendsOffset = 10
+
+    /** Suite des tendances, tant que l'écoute des stations progresse vraiment. */
+    fun loadMoreTrends() {
+        val h = _home.value
+        if (h.loading || h.trendsLoadingMore || h.trendsEnd || h.trends.isEmpty()) return
+        val country = h.country
+        _home.update { it.copy(trendsLoadingMore = true) }
+        viewModelScope.launch {
+            val page = runCatching { onde.api.trending(country, PAGE, trendsOffset) }.getOrNull()
+            if (_home.value.country != country) return@launch
+            trendsOffset += PAGE
+            val rising = page.orEmpty().filter { it.clickTrend > 0 }
+            _home.update {
+                it.copy(
+                    trends = it.trends.plusNew(rising),
+                    trendsLoadingMore = false,
+                    trendsEnd = page.isNullOrEmpty() || rising.size < page.size,
+                )
+            }
+        }
+    }
+
+    private val pagers = HashMap<String, GenrePager>()
 
     fun selectGenre(key: String) {
         _home.update { it.copy(selectedGenre = key) }
@@ -144,15 +236,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val genre = Genres.find(key) ?: return
         val cached = _home.value.genres[key]
         if (!force && cached != null && (cached.loading || cached.stations.isNotEmpty())) return
-        val country = currentCountry()
+        val pager = GenrePager(genre.tags, currentCountry())
+        pagers[key] = pager
         _home.update { it.copy(genres = it.genres + (key to GenreState(loading = true))) }
         viewModelScope.launch {
-            val result = runCatching { onde.api.byGenre(genre.tags, country) }
+            val result = runCatching { pager.next(onde.api) }
+            if (pagers[key] !== pager) return@launch
             val state = result.fold(
-                onSuccess = { GenreState(stations = it) },
+                onSuccess = { GenreState(stations = emptyList<Station>().plusNew(it), endReached = pager.done || it.isEmpty()) },
                 onFailure = { GenreState(error = "Impossible de charger ce genre. Vérifie ta connexion.") },
             )
             _home.update { it.copy(genres = it.genres + (key to state)) }
+        }
+    }
+
+    /** Suite d'un genre (appelée quand on arrive en bas de la liste). */
+    fun loadMoreGenre(key: String) {
+        val state = _home.value.genres[key] ?: return
+        val pager = pagers[key] ?: return
+        if (state.loading || state.loadingMore || state.endReached) return
+        _home.update { it.copy(genres = it.genres + (key to state.copy(loadingMore = true))) }
+        viewModelScope.launch {
+            var stations = state.stations
+            var failed = false
+            // Une page peut ne contenir que des doublons : on en demande jusqu'à trois d'affilée.
+            for (attempt in 1..3) {
+                val page = runCatching { pager.next(onde.api) }.getOrElse { failed = true; emptyList() }
+                stations = stations.plusNew(page)
+                if (failed || pager.done || stations.size > state.stations.size) break
+            }
+            if (pagers[key] !== pager) return@launch
+            val end = failed || pager.done || stations.size == state.stations.size
+            _home.update { it.copy(genres = it.genres + (key to GenreState(stations = stations, endReached = end))) }
         }
     }
 
@@ -184,6 +299,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setCountry(code: String) {
         library.setCountry(code)
         // Les listes par genre dépendent du pays : on les recharge.
+        pagers.clear()
         _home.update { it.copy(genres = emptyMap()) }
         refreshHome()
         val selected = _home.value.selectedGenre

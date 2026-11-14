@@ -198,7 +198,12 @@ fun OndeRoot(vm: MainViewModel = viewModel()) {
                     library = library,
                     onToggleSaved = vm.library::toggleSaved,
                 )
-                else -> FavoritesScreen(library = library, onPlay = vm::play)
+                else -> FavoritesScreen(
+                    library = library,
+                    onPlay = vm::play,
+                    // La station est ajoutée aux favoris et lancée aussitôt : on entend tout de suite si l'adresse marche.
+                    onAddCustom = { name, url -> vm.play(vm.library.addCustomStation(name, url)) },
+                )
             }
         }
     }

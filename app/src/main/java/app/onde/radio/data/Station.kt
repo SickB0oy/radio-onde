@@ -34,6 +34,9 @@ data class Station(
 
     val streamUrl: String get() = urlResolved.ifBlank { url }
 
+    /** Station ajoutée à la main par son adresse (absente de l'annuaire Radio-Browser). */
+    val isCustom: Boolean get() = uuid.startsWith(CUSTOM_PREFIX)
+
     val tagList: List<String>
         get() = tags.split(',').map { it.trim().lowercase() }.filter { it.isNotEmpty() }
 
@@ -45,6 +48,7 @@ data class Station(
     /** Ligne secondaire : deux premiers genres et la ville/le pays. */
     val subtitle: String
         get() {
+            if (isCustom) return "Ajoutée par son adresse"
             val genres = tagList.take(2).joinToString(" · ") { it.replaceFirstChar(Char::uppercase) }
             val place = PlaceNames.fr(state).ifBlank { countryNameFr }
             return listOf(genres, place).filter { it.isNotBlank() }.joinToString(" · ")
@@ -64,4 +68,12 @@ data class Station(
     val qualityLabel: String
         get() = listOf(codec.uppercase(), if (bitrate > 0) "$bitrate kbit/s" else "")
             .filter { it.isNotBlank() }.joinToString(" · ")
+
+    companion object {
+        const val CUSTOM_PREFIX = "custom:"
+
+        /** Crée une station à partir d'un nom et de l'adresse de son flux. */
+        fun custom(name: String, url: String): Station =
+            Station(uuid = CUSTOM_PREFIX + Integer.toHexString(url.hashCode()), name = name, url = url, urlResolved = url)
+    }
 }

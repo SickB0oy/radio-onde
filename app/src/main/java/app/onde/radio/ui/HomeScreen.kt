@@ -191,6 +191,9 @@ private fun LazyListScope.forYou(
             },
         )
     }
+    if (home.trends.isNotEmpty() && !home.trendsEnd) {
+        item(key = "more-trends") { LoadMore(home.trends.size) { vm.loadMoreTrends() } }
+    }
 }
 
 /** Les stations d'un genre : celles du pays choisi en premier, complétées par le reste du monde. */
@@ -226,6 +229,9 @@ private fun LazyListScope.genreStations(
     }
     itemsIndexed(state?.stations.orEmpty(), key = { _, s -> "genre-$key-" + s.uuid }) { index, station ->
         StationRow(station = station, onClick = { onPlay(station) }, leading = { Rank(index) })
+    }
+    if (state != null && state.stations.isNotEmpty() && !state.endReached) {
+        item(key = "more-$key") { LoadMore(state.stations.size) { vm.loadMoreGenre(key) } }
     }
 }
 
@@ -300,6 +306,16 @@ private fun SuggestionRow(items: List<Suggestion>, onPlay: (Station) -> Unit) {
             }
         }
     }
+}
+
+/**
+ * Dernière ligne d'une liste : dès qu'elle apparaît à l'écran, la suite se charge.
+ * [loadedCount] relance le chargement si la ligne est toujours visible après une page.
+ */
+@Composable
+fun LoadMore(loadedCount: Int, onLoad: () -> Unit) {
+    LaunchedEffect(loadedCount) { onLoad() }
+    Loading()
 }
 
 @Composable

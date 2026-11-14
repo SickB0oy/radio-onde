@@ -98,7 +98,7 @@ class RadioBrowserApi(private val client: OkHttpClient) {
         ).filter { it.hasGeo }
 
     /** Toutes les stations géolocalisées d'un pays (chargées quand on zoome dessus sur le globe). */
-    suspend fun geoStationsByCountry(countryCode: String, limit: Int = 3000): List<Station> =
+    suspend fun geoStationsByCountry(countryCode: String, limit: Int = 20000): List<Station> =
         stations(
             "json/stations/search",
             mapOf(
@@ -132,11 +132,11 @@ class RadioBrowserApi(private val client: OkHttpClient) {
     }
 
     /** Stations dont l'écoute progresse le plus dans un pays. */
-    suspend fun trending(countryCode: String, limit: Int = 10) = stations(
+    suspend fun trending(countryCode: String, limit: Int = 10, offset: Int = 0) = stations(
         "json/stations/search",
         buildMap {
             countryFilter(countryCode)?.let { put("countrycode", it) }
-            put("order", "clicktrend"); put("reverse", "true"); put("limit", "$limit")
+            put("order", "clicktrend"); put("reverse", "true"); put("limit", "$limit"); put("offset", "$offset")
         },
     )
 
@@ -149,20 +149,34 @@ class RadioBrowserApi(private val client: OkHttpClient) {
         },
     )
 
-    suspend fun byTag(tag: String, limit: Int = 15, countryCode: String? = null) = stations(
+    suspend fun byTag(tag: String, limit: Int = 15, countryCode: String? = null, offset: Int = 0) = stations(
         "json/stations/search",
         buildMap {
             put("tag", tag)
             put("order", "votes")
             put("reverse", "true")
             put("limit", "$limit")
+            put("offset", "$offset")
             countryFilter(countryCode)?.let { put("countrycode", it) }
         },
     )
 
-    suspend fun search(query: String, limit: Int = 40) = stations(
+    /**
+     * Une page de stations pour un genre (plusieurs étiquettes possibles), des plus appréciées
+     * aux moins appréciées. [countryCode] nul = monde entier. Échoue si l'annuaire est injoignable.
+     */
+    suspend fun genrePage(tags: List<String>, countryCode: String?, limit: Int, offset: Int): List<Station> = coroutineScope {
+        val results = tags.map { tag -> async { runCatching { byTag(tag, limit, countryCode, offset) } } }.awaitAll()
+        if (results.all { it.isFailure }) throw results.first().exceptionOrNull() ?: IOException("Annuaire injoignable")
+        results.flatMap { it.getOrDefault(emptyList()) }
+            .sortedByDescending { it.votes }
+            .distinctBy { it.uuid }
+            .distinctBy { it.name.lowercase().trim() }
+    }
+
+    suspend fun search(query: String, limit: Int = 40, offset: Int = 0) = stations(
         "json/stations/search",
-        mapOf("name" to query, "order" to "clickcount", "reverse" to "true", "limit" to "$limit"),
+        mapOf("name" to query, "order" to "clickcount", "reverse" to "true", "limit" to "$limit", "offset" to "$offset"),
     )
 
     /** Fiches à jour de plusieurs stations, par identifiant (pour rafraîchir les favoris). */

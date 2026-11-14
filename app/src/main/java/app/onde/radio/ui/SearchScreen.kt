@@ -78,5 +78,8 @@ fun SearchScreen(vm: MainViewModel, onPlay: (Station) -> Unit, onClose: () -> Un
         items(search.results, key = { "search-" + it.uuid }) { station ->
             StationRow(station, onClick = { onPlay(station) })
         }
+        if (search.results.isNotEmpty() && !search.endReached && search.query == query) {
+            item(key = "more-search") { LoadMore(search.results.size) { vm.loadMoreSearch() } }
+        }
     }
 }

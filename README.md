@@ -10,6 +10,8 @@ Appli radio gratuite, sans pub ni pistage, qui va plus loin que les autres :
 - **Globe des radios** : une Terre en 3D où chaque point est une station ; on touche un point pour l'écouter.
 - **Volume égalisé** : toutes les stations sonnent à peu près aussi fort.
 - **Réveil radio** (heure, jours, station, son qui monte doucement) et **minuteur de veille** (fondu de 30 s).
+- **Tout l'annuaire** : les listes (styles, tendances, recherche) se prolongent toutes seules en défilant, et le globe charge toutes les stations d'un pays quand on zoome dessus.
+- **Ajout d'une station par son adresse**, pour les radios absentes de l'annuaire.
 - **Historique des titres** de toutes les stations (seulement les noms des morceaux, jamais l'audio).
 - **Découverte intelligente** : suggestions calculées sur le téléphone selon ton temps d'écoute par genre, tendances par pays, ambiances.
 - Notification, écran verrouillé et Bluetooth via Media3.

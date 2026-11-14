@@ -488,6 +488,7 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
                 if (z <= 0f) continue
                 val x = c.x + r0 * p.cosLat * sin(dLon)
                 val y = c.y - r0 * (cosLat0 * p.sinLat - sinLat0 * p.cosLat * cosD)
+                if (x < -bigDotPx || y < -bigDotPx || x > size.width + bigDotPx || y > size.height + bigDotPx) continue
                 val dot = when {
                     index < 40 -> bigDotPx
                     index < 250 -> midDotPx

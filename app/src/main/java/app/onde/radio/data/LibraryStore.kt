@@ -82,6 +82,15 @@ class LibraryStore(private val file: File, private val scope: CoroutineScope) {
         else d.copy(favorites = listOf(station) + d.favorites)
     }
 
+    /** Ajoute aux favoris une station saisie à la main ; renvoie la station (existante ou nouvelle). */
+    fun addCustomStation(name: String, url: String): Station {
+        val station = Station.custom(name, url)
+        edit { d ->
+            if (d.favorites.any { it.uuid == station.uuid }) d else d.copy(favorites = listOf(station) + d.favorites)
+        }
+        return station
+    }
+
     fun onStationPlayed(station: Station) = edit { d ->
         val recent = (listOf(station) + d.recent.filterNot { it.uuid == station.uuid }).take(20)
         d.copy(recent = recent, tagScores = d.tagScores.addTo(station.tagList, 1.0))
@@ -114,7 +123,7 @@ class LibraryStore(private val file: File, private val scope: CoroutineScope) {
     suspend fun refreshStationsIfNeeded(api: RadioBrowserApi) {
         val d = _data.value
         if (System.currentTimeMillis() - d.stationsRefreshedMs < REFRESH_INTERVAL_MS) return
-        val uuids = (d.favorites + d.recent).map { it.uuid }
+        val uuids = (d.favorites + d.recent).filterNot { it.isCustom }.map { it.uuid }
         if (uuids.isEmpty()) return
         val fresh = runCatching { api.byUuids(uuids) }.getOrNull()?.associateBy { it.uuid } ?: return
         edit { cur ->

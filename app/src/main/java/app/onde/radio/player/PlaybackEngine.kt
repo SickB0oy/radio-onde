@@ -214,7 +214,7 @@ class PlaybackEngine(
             playingSinceStartMs = 0L
             _state.value = PlayerUiState(station = station, isBuffering = true, sleepEndMs = _state.value.sleepEndMs)
             library.onStationPlayed(station)
-            scope.launch { api.countClick(station.uuid) }
+            if (!station.isCustom) scope.launch { api.countClick(station.uuid) }
 
             // Adresses de secours pour une lecture directe, dans l'ordre.
             directCandidates.clear()
