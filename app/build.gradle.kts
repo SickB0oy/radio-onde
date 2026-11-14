@@ -13,8 +13,8 @@ android {
         applicationId = "app.onde.radio"
         minSdk = 26
         targetSdk = 36
-        versionCode = 35
-        versionName = "0.9.3"
+        versionCode = 36
+        versionName = "0.9.4"
     }
 
     // Clé de signature fixe, fournie par les secrets GitHub KEYSTORE_BASE64 et KEYSTORE_PASSWORD

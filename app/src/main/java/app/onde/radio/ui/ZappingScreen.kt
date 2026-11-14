@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,6 +45,11 @@ import kotlinx.coroutines.delay
  * Zapping : une station par page, on glisse vers le haut pour passer à la suivante.
  * La station se lance dès qu'on s'arrête sur une page.
  */
+/** Place réservée à l'en-tête, aux boutons du bas, et au texte sous la pochette. */
+private val HEADER_SPACE = 84.dp
+private val CONTROLS_SPACE = 168.dp
+private val TEXT_SPACE = 170.dp
+
 @Composable
 fun ZappingScreen(vm: MainViewModel, onClose: () -> Unit) {
     val stations = remember { vm.zapStations() }
@@ -72,24 +78,38 @@ fun ZappingScreen(vm: MainViewModel, onClose: () -> Unit) {
         VerticalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
             val station = stations[page]
             val isCurrent = player.station?.uuid == station.uuid
-            Column(
+            // La zone de la station s'arrête au-dessus des boutons du bas et sous l'en-tête : rien ne
+            // se chevauche, et la pochette rétrécit sur les petits écrans au lieu de pousser le texte.
+            BoxWithConstraints(
                 Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 28.dp, vertical = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(18.dp, Alignment.CenterVertically),
+                    .padding(start = 28.dp, end = 28.dp, top = HEADER_SPACE, bottom = CONTROLS_SPACE),
             ) {
-                StationArt(station, 240.dp, 36.dp)
+              val artSize = (maxHeight - TEXT_SPACE).coerceIn(96.dp, 240.dp)
+              Column(
+                Modifier.fillMaxSize(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterVertically),
+              ) {
+                StationArt(station, artSize, artSize * 0.15f)
                 Text(
                     station.displayName,
                     fontSize = 28.sp,
+                    lineHeight = 34.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (station.subtitle.isNotBlank()) {
-                    Text(station.subtitle, fontSize = 15.sp, color = Onde.TextSoft, textAlign = TextAlign.Center)
+                    Text(
+                        station.subtitle,
+                        fontSize = 15.sp,
+                        color = Onde.TextSoft,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 val nowPlaying = player.current?.takeIf { isCurrent }
                 Text(
@@ -106,6 +126,7 @@ fun ZappingScreen(vm: MainViewModel, onClose: () -> Unit) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+              }
             }
         }
 
