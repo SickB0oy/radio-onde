@@ -12,6 +12,7 @@ import app.onde.radio.data.Recommender
 import app.onde.radio.data.Station
 import app.onde.radio.data.Suggestion
 import app.onde.radio.data.Tag
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 data class GenreState(
@@ -365,17 +367,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val extra = runCatching { onde.api.geoStationsByCountry(cc) }.getOrNull()
             if (extra == null) globeCountries.remove(cc) // on réessaiera au prochain passage
-            _globe.update { g ->
-                val knownIds = g.stations.mapTo(HashSet()) { it.uuid }
-                val knownNames = g.stations.mapTo(HashSet()) { it.countryCode.uppercase() + "|" + it.name.trim().lowercase() }
+            val current = _globe.value.stations
+            // Fusion et tri en arrière-plan : avec des milliers de stations, ça ferait saccader le globe.
+            val merged = withContext(Dispatchers.Default) {
+                val knownIds = current.mapTo(HashSet()) { it.uuid }
+                val knownNames = current.mapTo(HashSet()) { it.countryCode.uppercase() + "|" + it.name.trim().lowercase() }
                 val fresh = extra.orEmpty().filter {
                     it.uuid !in knownIds && (it.countryCode.uppercase() + "|" + it.name.trim().lowercase()) !in knownNames
                 }
+                if (fresh.isEmpty()) null else (current + fresh).sortedByDescending { it.clickCount }
+            }
+            _globe.update { g ->
                 g.copy(
-                    stations = if (fresh.isEmpty()) g.stations else (g.stations + fresh).sortedByDescending { it.clickCount },
+                    // Si un autre pays a été ajouté entre-temps, on réessaiera celui-ci au prochain passage.
+                    stations = if (merged != null && g.stations === current) merged else g.stations,
                     loadingMore = (g.loadingMore - 1).coerceAtLeast(0),
                 )
             }
+            if (merged != null && _globe.value.stations !== merged) globeCountries.remove(cc)
         }
     }
 }

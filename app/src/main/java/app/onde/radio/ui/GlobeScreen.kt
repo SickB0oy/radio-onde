@@ -45,10 +45,8 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PointMode
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -68,6 +66,7 @@ import app.onde.radio.data.PlaceNames
 import app.onde.radio.data.Station
 import app.onde.radio.ui.theme.Onde
 import android.content.Context
+import android.graphics.Paint
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -98,56 +97,157 @@ private const val MAX_ZOOM = 40f
 /** À partir de ce zoom, on dessine la carte détaillée (Natural Earth 1:50m). */
 private const val DETAIL_ZOOM = 4f
 
-/** Un point sur la sphère (trigonométrie précalculée) : une station, ou un point de la grille. */
-private class GeoPoint(val station: Station?, val latDeg: Float, val lonDeg: Float) {
-    val sinLat = sin(latDeg * DEG)
-    val cosLat = cos(latDeg * DEG)
-    val lon = lonDeg * DEG
+/** Une station placée sur la sphère : sa position est précalculée en vecteur 3D (aucun calcul d'angle à l'affichage). */
+private class GeoPoint(val station: Station, val latDeg: Float, val lonDeg: Float) {
+    val x = cos(latDeg * DEG) * cos(lonDeg * DEG)
+    val y = cos(latDeg * DEG) * sin(lonDeg * DEG)
+    val z = sin(latDeg * DEG)
 
     constructor(station: Station) : this(station, station.geoLat!!.toFloat(), station.geoLong!!.toFloat())
 }
 
-/**
- * Contours des terres (Natural Earth 1:110m, domaine public), ajoutés à l'appli au moment de la
- * compilation par tools/make_land.py. Liste vide si le fichier est absent : le globe marche quand même.
- */
-private fun loadLand(context: Context, file: String): List<LandRing> = runCatching {
-    val bytes = context.assets.open(file).use { it.readBytes() }
-    val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
-    List(buf.int) {
-        LandRing(
-            List(buf.int) {
-                val lon = buf.float
-                val lat = buf.float
-                GeoPoint(null, lat, lon)
-            }
-        )
+/** Les stations du globe, avec leurs positions rangées dans un seul tableau pour un affichage rapide. */
+private class StationPoints(val list: List<GeoPoint>) {
+    val xyz = FloatArray(list.size * 3).also { a ->
+        list.forEachIndexed { i, p -> a[3 * i] = p.x; a[3 * i + 1] = p.y; a[3 * i + 2] = p.z }
     }
-}.getOrDefault(emptyList())
+}
 
 /**
- * Un contour de côte, avec son centre et son « rayon » (en angle sur la sphère) : permet de
- * sauter d'un coup les contours hors de l'écran quand on est très zoomé.
+ * Le point de vue : trois axes (vers l'œil, vers l'est, vers le nord) calculés une fois par image.
+ * Projeter un point revient alors à quelques multiplications.
  */
-private class LandRing(val points: List<GeoPoint>) {
-    val cx: Float
-    val cy: Float
-    val cz: Float
-    val radius: Float
+private class Camera(latDeg: Float, lonDeg: Float, val r: Float, val cx: Float, val cy: Float) {
+    private val sinLat = sin(latDeg * DEG)
+    private val cosLat = cos(latDeg * DEG)
+    private val sinLon = sin(lonDeg * DEG)
+    private val cosLon = cos(lonDeg * DEG)
+    val fx = cosLat * cosLon; val fy = cosLat * sinLon; val fz = sinLat
+    val ex = -sinLon; val ey = cosLon
+    val nx = -sinLat * cosLon; val ny = -sinLat * sinLon; val nz = cosLat
 
-    init {
-        var x = 0f; var y = 0f; var z = 0f
-        for (p in points) {
-            x += p.cosLat * cos(p.lon); y += p.cosLat * sin(p.lon); z += p.sinLat
+    /** Position à l'écran, ou null si le point est de l'autre côté du globe. */
+    fun project(p: GeoPoint): Offset? {
+        if (p.x * fx + p.y * fy + p.z * fz <= 0f) return null
+        return Offset(cx + r * (p.x * ex + p.y * ey), cy - r * (p.x * nx + p.y * ny + p.z * nz))
+    }
+}
+
+/** Tableau de nombres réutilisé d'une image à l'autre (aucune allocation pendant qu'on bouge le globe). */
+private class FloatBuf(capacity: Int = 4096) {
+    var data = FloatArray(capacity)
+    var n = 0
+
+    fun add2(a: Float, b: Float) {
+        if (n + 2 > data.size) data = data.copyOf(data.size * 2)
+        data[n] = a; data[n + 1] = b
+        n += 2
+    }
+
+    fun add4(a: Float, b: Float, c: Float, d: Float) {
+        if (n + 4 > data.size) data = data.copyOf(data.size * 2)
+        data[n] = a; data[n + 1] = b; data[n + 2] = c; data[n + 3] = d
+        n += 4
+    }
+}
+
+/**
+ * Côtes ou frontières (Natural Earth, domaine public), découpées en petits tronçons. Chaque
+ * tronçon connaît son centre et son étendue : quand on est zoomé, on écarte d'un seul test tous
+ * ceux qui sont hors de l'écran, au lieu de calculer des milliers de points invisibles.
+ */
+private class LineSet(
+    val xyz: FloatArray,
+    val start: IntArray,
+    val end: IntArray,
+    val cx: FloatArray,
+    val cy: FloatArray,
+    val cz: FloatArray,
+    val radius: FloatArray,
+) {
+    val count get() = start.size
+
+    /** Remplit [out] avec les segments visibles (x0, y0, x1, y1…), coupés à l'horizon. */
+    fun visibleSegments(cam: Camera, viewAngle: Float, w: Float, h: Float, out: FloatBuf) {
+        out.n = 0
+        val r = cam.r
+        for (c in 0 until count) {
+            val reach = viewAngle + radius[c]
+            if (reach < PI.toFloat() && cx[c] * cam.fx + cy[c] * cam.fy + cz[c] * cam.fz < cos(reach)) continue
+            var has = false
+            var px = 0f
+            var py = 0f
+            var i = start[c] * 3
+            val last = end[c] * 3
+            while (i <= last) {
+                val x = xyz[i]; val y = xyz[i + 1]; val z = xyz[i + 2]
+                if (x * cam.fx + y * cam.fy + z * cam.fz > 0f) {
+                    val sx = cam.cx + r * (x * cam.ex + y * cam.ey)
+                    val sy = cam.cy - r * (x * cam.nx + y * cam.ny + z * cam.nz)
+                    // On saute les segments entièrement hors de l'écran, du même côté.
+                    if (has && !((px < 0f && sx < 0f) || (px > w && sx > w) || (py < 0f && sy < 0f) || (py > h && sy > h))) {
+                        out.add4(px, py, sx, sy)
+                    }
+                    px = sx; py = sy; has = true
+                } else {
+                    has = false
+                }
+                i += 3
+            }
         }
-        val n = sqrt(x * x + y * y + z * z).coerceAtLeast(1e-6f)
-        cx = x / n; cy = y / n; cz = z / n
-        var maxAngle = 0f
-        for (p in points) {
-            val dot = cx * p.cosLat * cos(p.lon) + cy * p.cosLat * sin(p.lon) + cz * p.sinLat
-            maxAngle = maxOf(maxAngle, acos(dot.coerceIn(-1f, 1f)))
-        }
-        radius = maxAngle
+    }
+
+    companion object {
+        private const val CHUNK = 24
+        val EMPTY = LineSet(FloatArray(0), IntArray(0), IntArray(0), FloatArray(0), FloatArray(0), FloatArray(0), FloatArray(0))
+
+        /**
+         * Lit un fichier produit par tools/make_land.py à la compilation.
+         * Renvoie un ensemble vide si le fichier est absent : le globe marche quand même.
+         */
+        fun load(context: Context, file: String): LineSet = runCatching {
+            val bytes = context.assets.open(file).use { it.readBytes() }
+            val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            val xyz = FloatArray((bytes.size / 8) * 3)
+            val starts = ArrayList<Int>()
+            val ends = ArrayList<Int>()
+            var count = 0
+            repeat(buf.int) {
+                val n = buf.int
+                val first = count
+                repeat(n) {
+                    val lon = buf.float * DEG
+                    val lat = buf.float * DEG
+                    xyz[3 * count] = cos(lat) * cos(lon)
+                    xyz[3 * count + 1] = cos(lat) * sin(lon)
+                    xyz[3 * count + 2] = sin(lat)
+                    count++
+                }
+                // Tronçons de CHUNK segments ; deux tronçons voisins partagent leur point de jonction.
+                var s = first
+                while (s < first + n - 1) {
+                    val e = minOf(s + CHUNK, first + n - 1)
+                    starts += s
+                    ends += e
+                    s = e
+                }
+            }
+            val m = starts.size
+            val cx = FloatArray(m); val cy = FloatArray(m); val cz = FloatArray(m); val radius = FloatArray(m)
+            for (c in 0 until m) {
+                var x = 0f; var y = 0f; var z = 0f
+                for (i in starts[c]..ends[c]) { x += xyz[3 * i]; y += xyz[3 * i + 1]; z += xyz[3 * i + 2] }
+                val len = sqrt(x * x + y * y + z * z).coerceAtLeast(1e-6f)
+                x /= len; y /= len; z /= len
+                var maxAngle = 0f
+                for (i in starts[c]..ends[c]) {
+                    val dot = x * xyz[3 * i] + y * xyz[3 * i + 1] + z * xyz[3 * i + 2]
+                    maxAngle = maxOf(maxAngle, acos(dot.coerceIn(-1f, 1f)))
+                }
+                cx[c] = x; cy[c] = y; cz[c] = z; radius[c] = maxAngle
+            }
+            LineSet(xyz, starts.toIntArray(), ends.toIntArray(), cx, cy, cz, radius)
+        }.getOrDefault(EMPTY)
     }
 }
 
@@ -174,7 +274,7 @@ private fun visibleCount(total: Int, zoom: Float): Int =
 
 /** Garde une station si son pays est inconnu, ou si elle tombe dans son pays (avec une marge). */
 private fun plausible(p: GeoPoint, boxes: Map<String, FloatArray>): Boolean {
-    val box = boxes[p.station?.countryCode?.uppercase() ?: return true] ?: return true
+    val box = boxes[p.station.countryCode.uppercase()] ?: return true
     val margin = 1.5f
     val lonOk = box[2] <= -179f && box[3] >= 179f ||
         p.lonDeg in (box[2] - margin)..(box[3] + margin)
@@ -203,7 +303,7 @@ private class PlaceIndex(private val points: List<GeoPoint>) {
 
     private val countries: List<Place>
     private val regions: List<Place>
-    private val stationNames: List<String> = points.map { normalizeText(it.station?.displayName.orEmpty()) }
+    private val stationNames: List<String> = points.map { normalizeText(it.station.displayName) }
 
     init {
         fun place(name: String, detail: String, pts: List<GeoPoint>): Place {
@@ -215,15 +315,14 @@ private class PlaceIndex(private val points: List<GeoPoint>) {
             val zoom = (48f / maxOf(spread, 1.5f)).coerceIn(2.5f, 20f)
             return Place(GlobeHit(name, detail, lat, q(lons, 0.5f), zoom), normalizeText(name), pts.size)
         }
-        val withStation = points.filter { it.station != null }
-        countries = withStation.groupBy { it.station!!.countryCode.uppercase() }
+        countries = points.groupBy { it.station.countryCode.uppercase() }
             .filterKeys { it.length == 2 }
-            .map { (_, pts) -> place(pts.first().station!!.countryNameFr, "Pays · ${pts.size} stations", pts) }
+            .map { (_, pts) -> place(pts.first().station.countryNameFr, "Pays · ${pts.size} stations", pts) }
             .filter { it.key.isNotBlank() }
-        regions = withStation.filter { it.station!!.state.isNotBlank() }
-            .groupBy { normalizeText(PlaceNames.fr(it.station!!.state)) + "|" + it.station!!.countryCode.uppercase() }
+        regions = points.filter { it.station.state.isNotBlank() }
+            .groupBy { normalizeText(PlaceNames.fr(it.station.state)) + "|" + it.station.countryCode.uppercase() }
             .map { (_, pts) ->
-                val st = pts.first().station!!
+                val st = pts.first().station
                 place(PlaceNames.fr(st.state), "${st.countryNameFr} · ${pts.size} stations", pts)
             }
             .filter { it.key.length >= 2 }
@@ -240,7 +339,7 @@ private class PlaceIndex(private val points: List<GeoPoint>) {
             if (stations.size >= 4) break
             if (!stationNames[i].contains(q)) continue
             val p = points[i]
-            val st = p.station ?: continue
+            val st = p.station
             // Zoom suffisant pour que le point de cette station soit affiché.
             val zoom = maxOf(8f, sqrt((i + 1) / 150f) + 1f).coerceAtMost(MAX_ZOOM)
             stations += GlobeHit(st.displayName, "Station · ${st.placeLabel}", p.latDeg, p.lonDeg, zoom, st)
@@ -263,23 +362,34 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
     LaunchedEffect(Unit) { vm.loadGlobe() }
 
     val context = LocalContext.current
-    var land by remember { mutableStateOf<List<LandRing>>(emptyList()) }
-    var landDetailed by remember { mutableStateOf<List<LandRing>>(emptyList()) }
-    var borders by remember { mutableStateOf<List<LandRing>>(emptyList()) }
-    var bordersDetailed by remember { mutableStateOf<List<LandRing>>(emptyList()) }
+    var land by remember { mutableStateOf(LineSet.EMPTY) }
+    var landDetailed by remember { mutableStateOf(LineSet.EMPTY) }
+    var borders by remember { mutableStateOf(LineSet.EMPTY) }
+    var bordersDetailed by remember { mutableStateOf(LineSet.EMPTY) }
     var boxes by remember { mutableStateOf<Map<String, FloatArray>>(emptyMap()) }
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
-            land = loadLand(context, "land.bin")
-            landDetailed = loadLand(context, "land50.bin")
-            borders = loadLand(context, "borders.bin")
-            bordersDetailed = loadLand(context, "borders50.bin")
+            land = LineSet.load(context, "land.bin")
+            borders = LineSet.load(context, "borders.bin")
             boxes = loadCountryBoxes(context)
+            landDetailed = LineSet.load(context, "land50.bin")
+            bordersDetailed = LineSet.load(context, "borders50.bin")
         }
     }
-    // Stations triées de la plus écoutée à la moins écoutée (ordre de l'annuaire), hors positions douteuses.
-    val points = remember(globe.stations, boxes) {
-        globe.stations.map(::GeoPoint).filter { plausible(it, boxes) }
+    // Stations triées de la plus écoutée à la moins écoutée, hors positions douteuses.
+    // Préparées en arrière-plan : la liste peut compter des dizaines de milliers de stations.
+    var stationPoints by remember { mutableStateOf(StationPoints(emptyList())) }
+    LaunchedEffect(globe.stations, boxes) {
+        stationPoints = withContext(Dispatchers.Default) {
+            StationPoints(globe.stations.map(::GeoPoint).filter { plausible(it, boxes) })
+        }
+    }
+    val points = stationPoints.list
+    // Tampons et pinceaux réutilisés à chaque image.
+    val lineBuf = remember { FloatBuf(16384) }
+    val dotBufs = remember { Array(3) { FloatBuf() } }
+    val linePaint = remember {
+        Paint().apply { isAntiAlias = true; style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     }
     var centerLon by remember { mutableFloatStateOf(2f) }   // départ : l'Europe
     var centerLat by remember { mutableFloatStateOf(30f) }
@@ -293,6 +403,10 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
     val dotPx = with(LocalDensity.current) { 2.6.dp.toPx() }
     val midDotPx = with(LocalDensity.current) { 3.6.dp.toPx() }
     val bigDotPx = with(LocalDensity.current) { 5.dp.toPx() }
+
+    val selectedPoint = remember(points, selected) { selected?.let { sel -> points.firstOrNull { it.station.uuid == sel.uuid } } }
+    val playingUuid = player.station?.uuid
+    val playingPoint = remember(points, playingUuid) { points.firstOrNull { it.station.uuid == playingUuid } }
 
     // Recherche d'un pays, d'une région, d'une ville ou d'une station.
     var searchOpen by remember { mutableStateOf(false) }
@@ -358,18 +472,7 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
 
     fun radius() = min(canvasSize.width, canvasSize.height) * 0.42f * zoom
 
-    /** Projette une station à l'écran ; null si elle est de l'autre côté du globe. */
-    fun project(p: GeoPoint): Offset? {
-        val lat0 = centerLat * DEG
-        val dLon = p.lon - centerLon * DEG
-        val cosD = cos(dLon)
-        val z = sin(lat0) * p.sinLat + cos(lat0) * p.cosLat * cosD
-        if (z <= 0f) return null
-        val x = p.cosLat * sin(dLon)
-        val y = cos(lat0) * p.sinLat - sin(lat0) * p.cosLat * cosD
-        val r = radius()
-        return Offset(canvasSize.width / 2 + r * x, canvasSize.height / 2 - r * y)
-    }
+    fun camera() = Camera(centerLat, centerLon, radius(), canvasSize.width / 2, canvasSize.height / 2)
 
     Box(Modifier.fillMaxSize().background(Onde.Ink)) {
         Canvas(
@@ -391,8 +494,10 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
                         lastTouch = System.currentTimeMillis()
                         var best: GeoPoint? = null
                         var bestDist = tapRadiusPx
-                        for (p in points.take(visibleCount(points.size, zoom))) {
-                            val o = project(p) ?: continue
+                        val cam = camera()
+                        for (index in 0 until visibleCount(points.size, zoom)) {
+                            val p = points[index]
+                            val o = cam.project(p) ?: continue
                             val d = hypot(o.x - tap.x, o.y - tap.y)
                             if (d < bestDist) {
                                 bestDist = d
@@ -420,89 +525,61 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
             )
             drawCircle(Onde.Accent.copy(alpha = 0.35f), radius = r, center = c, style = Stroke(width = 1.dp.toPx()))
 
-            // Les continents : on trace chaque contour, en coupant là où il passe derrière le globe.
-            // Tracés visibles seulement (on saute ceux hors de l'écran), coupés à l'horizon.
-            val lat0r = centerLat * DEG
-            val lon0r = centerLon * DEG
-            val vx = cos(lat0r) * cos(lon0r)
-            val vy = cos(lat0r) * sin(lon0r)
-            val vz = sin(lat0r)
+            val cam = Camera(centerLat, centerLon, r, c.x, c.y)
             // Angle entre le centre de l'écran et son coin, vu depuis le centre de la Terre.
             val halfDiag = hypot(size.width, size.height) / 2
-            val viewAngle = if (halfDiag >= radius()) (PI / 2).toFloat() else asin(halfDiag / radius())
-            fun pathOf(rings: List<LandRing>): Path {
-                val path = Path()
-                for (ring in rings) {
-                    val dot = (vx * ring.cx + vy * ring.cy + vz * ring.cz).coerceIn(-1f, 1f)
-                    if (acos(dot) - ring.radius > viewAngle) continue
-                    var penDown = false
-                    for (pt in ring.points) {
-                        val o = project(pt)
-                        if (o == null) {
-                            penDown = false
-                        } else if (penDown) {
-                            path.lineTo(o.x, o.y)
-                        } else {
-                            path.moveTo(o.x, o.y)
-                            penDown = true
-                        }
-                    }
-                }
-                return path
-            }
+            val viewAngle = if (halfDiag >= r) (PI / 2).toFloat() else asin(halfDiag / r)
             val detailed = zoom >= DETAIL_ZOOM
+            val native = drawContext.canvas.nativeCanvas
 
-            // Frontières entre pays : fines et discrètes, sous les côtes.
-            val borderRings = if (detailed && bordersDetailed.isNotEmpty()) bordersDetailed else borders
-            if (borderRings.isNotEmpty()) {
-                drawPath(
-                    pathOf(borderRings),
-                    Onde.Accent.copy(alpha = 0.30f),
-                    style = Stroke(width = 0.8.dp.toPx(), join = StrokeJoin.Round),
-                )
+            // Frontières (fines et discrètes) puis côtes : carte détaillée quand on zoome, si présente.
+            // Chaque tracé part en un seul lot de segments, sans rien allouer.
+            fun drawLines(set: LineSet, alpha: Float, width: Float) {
+                if (set.count == 0) return
+                set.visibleSegments(cam, viewAngle, size.width, size.height, lineBuf)
+                if (lineBuf.n == 0) return
+                linePaint.color = Onde.Accent.copy(alpha = alpha).toArgb()
+                linePaint.strokeWidth = width
+                native.drawLines(lineBuf.data, 0, lineBuf.n, linePaint)
             }
-
-            // Côtes : carte détaillée quand on zoome (si présente).
-            val coastRings = if (detailed && landDetailed.isNotEmpty()) landDetailed else land
-            if (coastRings.isNotEmpty()) {
-                drawPath(
-                    pathOf(coastRings),
-                    Onde.Accent.copy(alpha = 0.55f),
-                    style = Stroke(width = 1.2.dp.toPx(), join = StrokeJoin.Round),
-                )
-            }
+            drawLines(if (detailed && bordersDetailed.count > 0) bordersDetailed else borders, 0.30f, 0.8.dp.toPx())
+            drawLines(if (detailed && landDetailed.count > 0) landDetailed else land, 0.55f, 1.2.dp.toPx())
 
             // Les stations : seulement les plus écoutées quand on est loin, de plus en plus quand on
             // zoome. Ce choix ne dépend que du zoom (pas de la position à l'écran) : rien ne clignote
             // quand la Terre tourne. Les plus écoutées sont plus grosses ; près du bord, plus discrètes.
-            val r0 = radius()
-            val lat0 = centerLat * DEG
-            val sinLat0 = sin(lat0)
-            val cosLat0 = cos(lat0)
+            val xyz = stationPoints.xyz
             val count = visibleCount(points.size, zoom)
+            dotBufs.forEach { it.n = 0 }
+            val margin = bigDotPx
             for (index in 0 until count) {
-                val p = points[index]
-                val dLon = p.lon - centerLon * DEG
-                val cosD = cos(dLon)
-                val z = sinLat0 * p.sinLat + cosLat0 * p.cosLat * cosD
-                if (z <= 0f) continue
-                val x = c.x + r0 * p.cosLat * sin(dLon)
-                val y = c.y - r0 * (cosLat0 * p.sinLat - sinLat0 * p.cosLat * cosD)
-                if (x < -bigDotPx || y < -bigDotPx || x > size.width + bigDotPx || y > size.height + bigDotPx) continue
-                val dot = when {
-                    index < 40 -> bigDotPx
-                    index < 250 -> midDotPx
-                    else -> dotPx
+                val px = xyz[3 * index]; val py = xyz[3 * index + 1]; val pz = xyz[3 * index + 2]
+                val depth = px * cam.fx + py * cam.fy + pz * cam.fz
+                if (depth <= 0f) continue
+                val x = c.x + r * (px * cam.ex + py * cam.ey)
+                val y = c.y - r * (px * cam.nx + py * cam.ny + pz * cam.nz)
+                if (x < -margin || y < -margin || x > size.width + margin || y > size.height + margin) continue
+                val sizeClass = if (index < 40) 2 else if (index < 250) 1 else 0
+                if (depth >= 0.5f) {
+                    // Cas courant : opaque, envoyé par lot avec les autres points de même taille.
+                    dotBufs[sizeClass].add2(x, y)
+                } else {
+                    // Près du bord du globe : fondu continu (pas de palier qui saute).
+                    val dot = if (sizeClass == 2) bigDotPx else if (sizeClass == 1) midDotPx else dotPx
+                    drawCircle(Color.White.copy(alpha = 0.25f + 0.75f * (depth / 0.5f)), radius = dot / 2, center = Offset(x, y))
                 }
-                // Fondu continu vers le bord du globe (pas de palier qui saute).
-                val alpha = 0.25f + 0.75f * (z / 0.5f).coerceAtMost(1f)
-                drawCircle(Color.White.copy(alpha = alpha), radius = dot / 2, center = Offset(x, y))
+            }
+            linePaint.color = android.graphics.Color.WHITE
+            for (k in 0..2) {
+                if (dotBufs[k].n == 0) continue
+                linePaint.strokeWidth = if (k == 2) bigDotPx else if (k == 1) midDotPx else dotPx
+                native.drawPoints(dotBufs[k].data, 0, dotBufs[k].n, linePaint)
             }
 
             // Station touchée : un anneau et, en petit, la ville et le pays à côté du point.
             selected?.let { sel ->
-                val sp = points.firstOrNull { it.station?.uuid == sel.uuid } ?: return@let
-                val o = project(sp) ?: return@let
+                val sp = selectedPoint ?: return@let
+                val o = cam.project(sp) ?: return@let
                 drawCircle(Onde.Accent, radius = 7.dp.toPx(), center = o, style = Stroke(2.dp.toPx()))
                 val place = sel.placeLabel
                 if (place.isNotBlank()) {
@@ -525,9 +602,8 @@ fun GlobeScreen(vm: MainViewModel, onClose: (() -> Unit)?, onOpenPlayer: () -> U
             }
 
             // Station en écoute
-            val playingUuid = player.station?.uuid
-            points.firstOrNull { it.station?.uuid == playingUuid }?.let { p ->
-                project(p)?.let { o ->
+            playingPoint?.let { p ->
+                cam.project(p)?.let { o ->
                     drawCircle(Color.White, radius = 4.dp.toPx(), center = o)
                     drawCircle(Color.White.copy(alpha = 0.5f), radius = 10.dp.toPx(), center = o, style = Stroke(1.5.dp.toPx()))
                 }

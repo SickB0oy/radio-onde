@@ -86,9 +86,14 @@ class RadioBrowserApi(private val client: OkHttpClient) {
     }
 
     private suspend fun stations(path: String, params: Map<String, String>): List<Station> =
-        json.decodeFromString<List<Station>>(fetch(path, params))
-            .filter { it.streamUrl.startsWith("http") }
-            .distinctBy { it.name.lowercase().trim() }
+        fetch(path, params).let { body ->
+            // Le décodage de milliers de stations est lourd : jamais sur le fil d'affichage.
+            withContext(Dispatchers.Default) {
+                json.decodeFromString<List<Station>>(body)
+                    .filter { it.streamUrl.startsWith("http") }
+                    .distinctBy { it.name.lowercase().trim() }
+            }
+        }
 
     /** Les stations les plus écoutées qui ont une position : de quoi dessiner le globe. */
     suspend fun geoStations(limit: Int = 4000): List<Station> =
