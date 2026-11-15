@@ -64,4 +64,9 @@ app/src/main/java/app/onde/radio/
 
 - Android Auto, widget, réveil radio, minuteur de veille.
 - Polices Space Grotesk / Inter de la maquette (à placer dans `res/font`).
-- Licence libre (GPL-3.0 conseillée) avant publication sur F-Droid.
+
+## Licence
+
+Radio Onde est un logiciel libre publié sous licence [GPL-3.0](LICENSE) :
+tu peux l'utiliser, l'étudier, le modifier et le redistribuer, à condition de
+garder la même licence. Créée par SickB0oy.

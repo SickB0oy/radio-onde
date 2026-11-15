@@ -152,6 +152,7 @@ fun AboutScreen(vm: MainViewModel, onClose: () -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SectionTitle("Liens")
             LinkRow("Code source sur GitHub", REPO_URL)
+            LinkRow("Licence libre GPL-3.0", "$REPO_URL/blob/main/LICENSE")
             LinkRow("Mises à jour", "$REPO_URL/releases/latest")
             LinkRow("Signaler un problème ou proposer une idée", "$REPO_URL/issues")
         }
